@@ -170,3 +170,6 @@ h3 { font-size: 15px; margin: 18px 0 8px; }
 #toast.err { background: var(--danger); }
 #sheetRoot:not(:empty) ~ #toast { bottom: auto; top: calc(14px + env(safe-area-inset-top)); transform: translateX(-50%) translateY(-20px); z-index: 90; }
 #sheetRoot:not(:empty) ~ #toast.show { transform: translateX(-50%); }
+
+.sync { display: block; width: 100%; margin-top: 4px; padding: 2px 0 0; background: none; border: 0; color: inherit; opacity: .85; font-size: 12.5px; text-align: left; }
+.sync[hidden] { display: none; }

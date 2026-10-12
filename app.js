@@ -2,7 +2,7 @@
 /* Stock Fincas — app de stock, entradas y salidas de mis fincas.
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión. */
 
-const APP_VERSION = '1.0.0';
+const APP_VERSION = '1.1.0';
 
 /* ---------- Listas fijas (textos tal como los lee el Excel de Gestión de fincas) ---------- */
 const CAT_STOCK = ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimulantes']; // los únicos que mueven stock
@@ -80,6 +80,7 @@ let state;
 let saveChain = Promise.resolve();
 function persist() {
   saveChain = saveChain.then(() => dbSet('state', state)).catch((e) => toast('No se pudo guardar en el móvil: ' + (e && e.message || e), true));
+  markDirty();
   return saveChain;
 }
 function seedState() {
@@ -507,6 +508,143 @@ function openExportSheet() {
   draw();
 }
 
+/* ---------- Copia automática en Google Sheets ----------
+   La app envía el estado completo al receptor (Apps Script). La hoja es un espejo de un solo sentido:
+   sin conexión queda "pendiente" y se envía al volver la conexión. */
+let sync = { url: '', clave: '', enabled: false, dirty: false, lastOk: null, lastError: '' };
+let syncRev = 0, syncTimer = null, syncRetry = null, syncRunning = false;
+const syncOn = () => !!(sync.enabled && sync.url && sync.clave);
+async function loadSync() { try { const s = await dbGet('sync'); if (s) sync = { ...sync, ...s }; } catch (_) { /* nada */ } }
+function saveSync() { dbSet('sync', sync).catch(() => {}); }
+
+function markDirty() {
+  if (!syncOn()) return;
+  sync.dirty = true; syncRev++; saveSync(); renderSyncStatus();
+  clearTimeout(syncTimer); syncTimer = setTimeout(() => runSync(), 2500);
+}
+async function callScript(accion, extra = {}) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), 30000);
+  try {
+    // Sin cabeceras propias: así es una petición simple (text/plain) y Google no exige comprobación previa.
+    const res = await fetch(sync.url, { method: 'POST', body: JSON.stringify({ accion, clave: sync.clave, ...extra }), signal: ctrl.signal });
+    const txt = await res.text();
+    try { return JSON.parse(txt); } catch (_) { throw new Error('La dirección no responde como el receptor (revisa que esté publicado para «Cualquier persona»)'); }
+  } catch (e) {
+    if (e && e.name === 'AbortError') throw new Error('Tiempo de espera agotado');
+    if (e instanceof TypeError) throw new Error('Sin conexión con Google');
+    throw e;
+  } finally { clearTimeout(t); }
+}
+function syncPayload() {
+  const m = computeStock();
+  const byId = new Map(state.productos.map((p) => [p.id, p]));
+  const salidas = [...state.movs].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe]);
+  const entradas = [...state.entradas].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts).map((e) => { const p = byId.get(e.producto); return [e.fecha, p ? p.nombre : '(producto borrado)', p ? p.categoria : '', e.cantidad, e.cantidad ? round(e.importe / e.cantidad, 6) : 0, e.importe]; });
+  const stock = [...m.values()].sort((a, b) => CAT_STOCK.indexOf(a.p.categoria) - CAT_STOCK.indexOf(b.p.categoria) || a.p.nombre.localeCompare(b.p.nombre, 'es'))
+    .map((x) => [x.p.nombre, x.p.categoria, x.q, x.avg != null ? round(x.avg, 4) : '', x.q > EPS ? round(x.v, 2) : 0]);
+  return { salidas, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+}
+async function runSync() {
+  if (!syncOn() || syncRunning) return;
+  if (!navigator.onLine) { renderSyncStatus(); return; }
+  syncRunning = true; const rev = syncRev; renderSyncStatus();
+  try {
+    const r = await callScript('sincronizar', syncPayload());
+    if (!r.ok) throw new Error(r.error === 'clave' ? 'La clave no coincide con la del script' : (r.error || 'Error del receptor'));
+    sync.lastOk = new Date().toISOString(); sync.lastError = '';
+    if (syncRev === rev) sync.dirty = false;
+  } catch (e) {
+    sync.lastError = e.message || String(e); sync.dirty = true;
+    clearTimeout(syncRetry); syncRetry = setTimeout(() => runSync(), 60000);
+  } finally {
+    syncRunning = false; saveSync(); renderSyncStatus();
+    if (sync.dirty && !sync.lastError) { clearTimeout(syncTimer); syncTimer = setTimeout(() => runSync(), 800); }
+  }
+}
+function ago(iso) {
+  if (!iso) return 'nunca';
+  const min = Math.round((Date.now() - new Date(iso).getTime()) / 60000);
+  if (min < 1) return 'ahora mismo';
+  if (min < 60) return `hace ${min} min`;
+  if (min < 1440) return `hace ${Math.round(min / 60)} h`;
+  return new Date(iso).toLocaleDateString('es-ES');
+}
+function syncStatusText() {
+  if (!syncOn()) return '';
+  if (syncRunning) return '☁ Enviando a Google Sheets…';
+  if (sync.lastError) return '☁ No se pudo enviar: ' + sync.lastError;
+  if (sync.dirty) return navigator.onLine ? '☁ Pendiente de enviar…' : '☁ Pendiente de enviar (sin conexión)';
+  return '☁ Hoja al día · ' + ago(sync.lastOk);
+}
+function renderSyncStatus() {
+  const el = $('#syncStatus'); if (el) { el.textContent = syncStatusText(); el.hidden = !syncOn(); }
+  const box = $('#syncLine'); if (box) box.textContent = syncStatusText();
+}
+function validState(s) { return s && Array.isArray(s.productos) && Array.isArray(s.entradas) && Array.isArray(s.movs) && s.settings; }
+
+function drawSync(box) {
+  if (syncOn()) {
+    box.innerHTML = `
+      <p class="small" id="syncLine">${esc(syncStatusText())}</p>
+      <p class="small">Cada cambio se envía solo a tu hoja de Google (pestañas Salidas, Entradas y Stock). Sin conexión se queda pendiente y se envía al volver.</p>
+      <div class="actions">
+        <button class="btn primary" id="syNow">Sincronizar ahora</button>
+        <button class="btn" id="syRes">Restaurar desde la hoja</button>
+        <button class="btn danger" id="syOff">Desactivar</button>
+      </div>`;
+    $('#syNow', box).onclick = () => { if (!navigator.onLine) return toast('Sin conexión: se enviará al volver', true); sync.lastError = ''; markDirty(); clearTimeout(syncTimer); runSync(); };
+    $('#syRes', box).onclick = async () => {
+      try {
+        const est = await callScript('estado');
+        if (!est.ok || !est.estado) throw new Error(est.error === 'sin copia' ? 'La hoja todavía no tiene copia' : (est.error || 'No se pudo leer la copia'));
+        const s = JSON.parse(est.estado);
+        if (!validState(s)) throw new Error('La copia de la hoja no es válida');
+        if (!confirm(`Se reemplazarán los datos de este móvil por los de la hoja (${s.movs.length} registros, ${s.entradas.length} entradas, copia ${ago(est.fecha)}). ¿Continuar?`)) return;
+        state = s; await persist(); closeSheet(); renderAll(); toast('Restaurado desde la hoja');
+      } catch (e) { toast(e.message || 'No se pudo restaurar', true); }
+    };
+    $('#syOff', box).onclick = () => { sync.enabled = false; sync.dirty = false; sync.lastError = ''; saveSync(); renderSyncStatus(); drawSync(box); toast('Copia automática desactivada'); };
+  } else {
+    box.innerHTML = `
+      <p class="small">Opcional. Envía automáticamente todo a una hoja de Google Sheets de tu Drive (copia de seguridad y datos listos para copiar). Necesita configurar una vez el script de Google que se explica en el README.</p>
+      <label class="fld"><span>Dirección del script (termina en /exec)</span><input id="syU" type="url" value="${esc(sync.url)}" placeholder="https://script.google.com/macros/s/…/exec" autocomplete="off"></label>
+      <label class="fld"><span>Clave</span><input id="syK" type="password" value="${esc(sync.clave)}" autocomplete="off"></label>
+      <div class="actions"><button class="btn primary" id="syOn">Probar y activar</button></div>`;
+    $('#syOn', box).onclick = () => activateSync($('#syU', box).value.trim(), $('#syK', box).value.trim(), box);
+  }
+}
+async function activateSync(url, clave, box) {
+  if (!/^https:\/\/script\.google\.com\/macros\/s\/[^/\s]+\/exec\/?$/.test(url)) return toast('La dirección debe ser la de la aplicación web del script y terminar en /exec', true);
+  if (!clave) return toast('Escribe la clave', true);
+  const prev = { ...sync };
+  sync.url = url; sync.clave = clave;
+  const finish = () => { sync.enabled = true; sync.dirty = true; sync.lastError = ''; syncRev++; saveSync(); renderSyncStatus(); drawSync(box); runSync(); toast('Conectado con Google Sheets'); };
+  try {
+    const ping = await callScript('ping');
+    if (!ping.ok) throw new Error(ping.error === 'clave' ? 'La clave no coincide con la del script' : (ping.error || 'El receptor no responde'));
+    const est = await callScript('estado');
+    if (est.ok && est.estado) {
+      // La hoja ya tiene una copia (por ejemplo, otro móvil): hay que decidir qué manda.
+      let info = null; try { info = JSON.parse(est.estado); } catch (_) { /* nada */ }
+      const n = info && validState(info) ? `${info.movs.length} registros y ${info.entradas.length} entradas` : 'datos';
+      box.innerHTML = `
+        <p><b>La hoja ya contiene una copia</b> (${n}, ${ago(est.fecha)}).</p>
+        <p class="small">Si este móvil es nuevo, usa la copia de la hoja. Si lo de este móvil es lo correcto, sobrescribe la hoja.</p>
+        <div class="actions">
+          <button class="btn primary" id="syUse" ${info && validState(info) ? '' : 'disabled'}>Usar la copia de la hoja en este móvil</button>
+          <button class="btn" id="syOver">Sobrescribir la hoja con los datos de este móvil</button>
+          <button class="btn" id="syCan">Cancelar</button>
+        </div>`;
+      $('#syUse', box).onclick = async () => { state = info; await persist(); renderAll(); finish(); };
+      $('#syOver', box).onclick = finish;
+      $('#syCan', box).onclick = () => { sync = prev; drawSync(box); };
+      return;
+    }
+    finish();
+  } catch (e) { sync = prev; toast(e.message || 'No se pudo conectar', true); }
+}
+
 /* ---------- Ajustes y copia de seguridad ---------- */
 function backupJSON() { return JSON.stringify({ app: 'stock-fincas', version: APP_VERSION, exportedAt: new Date().toISOString(), state }, null, 1); }
 async function shareOrDownloadBackup() {
@@ -524,14 +662,18 @@ function openSettings() {
     <label class="fld"><span>Campaña que se anota en los registros nuevos</span><input id="sC" type="text" inputmode="numeric" value="${esc(state.settings.campana)}"></label>
     <div class="actions"><button class="btn" id="sSaveC">Guardar campaña</button></div>
     <div class="sep"></div>
-    <h3>Copia de seguridad</h3>
-    <p class="small">Los datos viven solo en este móvil. Guarda una copia de vez en cuando (por ejemplo en Drive o WhatsApp).${state.settings.lastBackup ? ` Última copia: ${new Date(state.settings.lastBackup).toLocaleString('es-ES')}.` : ' Aún no has hecho ninguna copia.'}</p>
+    <h3>Copia automática en Google Sheets</h3>
+    <div id="syncBox"></div>
+    <div class="sep"></div>
+    <h3>Copia de seguridad en fichero</h3>
+    <p class="small">Los datos viven en este móvil. Puedes guardar un fichero con todo (por ejemplo en Drive o WhatsApp).${state.settings.lastBackup ? ` Última copia: ${new Date(state.settings.lastBackup).toLocaleString('es-ES')}.` : ' Aún no has hecho ninguna.'}</p>
     <div class="actions">
       <button class="btn primary" id="sBk">Guardar copia / compartir</button>
-      <label class="btn" style="display:grid;place-items:center;cursor:pointer">Restaurar desde copia<input id="sRs" type="file" accept="application/json,.json" hidden></label>
+      <label class="btn" style="display:grid;place-items:center;cursor:pointer">Restaurar desde fichero<input id="sRs" type="file" accept="application/json,.json" hidden></label>
     </div>
     <div class="sep"></div>
     <p class="small">Stock Fincas v${APP_VERSION} · stock de partida cargado desde Control_Stock_Fincas.xlsx (hasta 30/09/2026).</p>`);
+  drawSync($('#syncBox', body));
   $('#sSaveC', body).onclick = () => {
     const n = parseInt($('#sC', body).value, 10);
     if (!(n >= 2000 && n <= 2100)) return toast('Escribe un año válido, por ejemplo 2026', true);
@@ -543,7 +685,7 @@ function openSettings() {
     try {
       const j = JSON.parse(await file.text());
       const s = j && j.state;
-      if (!s || !Array.isArray(s.productos) || !Array.isArray(s.entradas) || !Array.isArray(s.movs)) throw new Error('El fichero no es una copia de Stock Fincas');
+      if (!validState(s)) throw new Error('El fichero no es una copia de Stock Fincas');
       if (!confirm(`Se reemplazarán todos los datos actuales por los de la copia (${s.movs.length} registros, ${s.entradas.length} entradas). ¿Continuar?`)) return;
       state = s; await persist(); closeSheet(); renderAll(); toast('Copia restaurada');
     } catch (err) { toast(err.message || 'No se pudo leer la copia', true); }
@@ -556,6 +698,7 @@ function renderAll() {
   const m = computeStock();
   $('#totalValor').textContent = eur(totalValor(m));
   document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
+  renderSyncStatus();
   $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nueva salida';
   if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else renderSalidas();
 }
@@ -564,6 +707,12 @@ async function init() {
   document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { ui.tab = b.dataset.tab; window.scrollTo(0, 0); renderAll(); });
   $('#btnSettings').onclick = openSettings;
   $('#fab').onclick = () => { if (ui.tab === 'stock') openProductSheet(null); else if (ui.tab === 'entradas') openEntradaForm(null); else openMovForm(null); };
+  await loadSync();
+  $('#syncStatus').onclick = openSettings;
+  window.addEventListener('online', () => { if (sync.dirty) runSync(); else renderSyncStatus(); });
+  window.addEventListener('offline', renderSyncStatus);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible' && sync.dirty) runSync(); });
+  setInterval(renderSyncStatus, 60000);
   try {
     let s = await dbGet('state');
     if (!s) { s = seedState(); await dbSet('state', s); }
@@ -573,6 +722,7 @@ async function init() {
     toast('Este navegador no permite guardar datos: lo que anotes se perderá al cerrar', true);
   }
   renderAll();
+  if (syncOn() && sync.dirty) setTimeout(runSync, 1500);
   if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
 }
