@@ -173,3 +173,11 @@ h3 { font-size: 15px; margin: 18px 0 8px; }
 
 .sync { display: block; width: 100%; margin-top: 4px; padding: 2px 0 0; background: none; border: 0; color: inherit; opacity: .85; font-size: 12.5px; text-align: left; }
 .sync[hidden] { display: none; }
+
+/* v2: avisos, desplegables y fichas */
+.notice { background: var(--warn-soft); border-radius: 14px; padding: 12px 14px; margin: 0 0 14px; display: grid; gap: 4px; }
+.notice .small { margin: 0 0 6px; }
+details.more { margin-top: 14px; }
+details.more summary { cursor: pointer; font-weight: 600; color: var(--muted); font-size: 14.5px; padding: 6px 2px; }
+.box div b { text-align: right; }
+.sheet h3 { font-size: 15px; margin: 16px 0 8px; }

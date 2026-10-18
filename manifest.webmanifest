@@ -1,7 +1,7 @@
 {
-  "name": "Stock Fincas",
-  "short_name": "Stock Fincas",
-  "description": "Stock, entradas y salidas de mis fincas",
+  "name": "Gestión fincas",
+  "short_name": "Gestión fincas",
+  "description": "Stock, entradas, salidas y gestión de mis fincas",
   "lang": "es",
   "start_url": "./",
   "scope": "./",
