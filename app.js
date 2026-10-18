@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.0.0';
+const APP_VERSION = '2.0.1';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (textos tal como los lee el Excel de Gestión de fincas) ---------- */
@@ -692,7 +692,7 @@ function saveMx() { dbSet('mx', mx).catch(() => {}); }
 const esPropiaMx = (f) => f.propia === true;
 
 function planStock(st, ix) {
-  const plan = { prod: [], unirProd: [], sinProd: [], cats: [], fin: [], nuevasFin: [], sinFin: [] };
+  const plan = { prod: [], unirProd: [], sinProd: [], cats: [], fin: [], nuevasFin: [], sinFin: [], retirarFin: [] };
   const usos = (pid) => st.entradas.filter((e) => e.producto === pid).length + st.movs.filter((m) => m.producto === pid).length;
   const porMid = new Map();
   for (const p of st.productos) {
@@ -712,6 +712,8 @@ function planStock(st, ix) {
   const enlazadas = new Set();
   for (const f of st.fincas) {
     const m = f.mid ? ix.fin.get(f.mid) : MX.buscarFinca(ix, f.name, esPropiaMx);
+    // Enlazada a una ficha que ya no existe o ya no es propia (p. ej. una duplicada): se retira
+    if (f.mid && (!m || !esPropiaMx(m))) { plan.retirarFin.push(f.code); continue; }
     if (!m) { if (!f.mid) plan.sinFin.push(f.code); continue; }
     plan.fin.push({ code: f.code, mid: m.id }); enlazadas.add(m.id);
   }
@@ -751,6 +753,11 @@ function aplicarStock(c, plan, ix, { unir = false, nuevasFin = true } = {}) {
     const f = c.fincas.find((x) => x.code === e.code), m = ix.fin.get(e.mid); if (!f || !m) continue;
     if (f.mid !== m.id) { f.mid = m.id; r.fin++; }
     if (f.name !== m.nombre) { f.name = m.nombre; r.ren++; }
+  }
+  // Fincas retiradas del maestro: sin registros se quitan; con registros se ocultan (los registros no se tocan)
+  for (const code of plan.retirarFin) {
+    if (c.movs.some((s) => s.finca === code)) { const f = c.fincas.find((x) => x.code === code); if (f && f.activa !== false) { f.activa = false; r.fin++; } }
+    else { c.fincas = c.fincas.filter((x) => x.code !== code); r.fin++; }
   }
   if (nuevasFin) for (const mid of plan.nuevasFin) {
     if (c.fincas.some((f) => f.mid === mid)) continue;
