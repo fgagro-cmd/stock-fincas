@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.1.2';
+const APP_VERSION = '2.2.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -279,6 +279,21 @@ function bindAmounts(root, f) {
   };
   q.oninput = () => sync('q'); p.oninput = () => sync('p'); t.oninput = () => sync('t');
 }
+/* Líneas que no mueven stock (ingresos, tareas, gastos sin producto): basta con la cantidad o con el total.
+   - Solo total (p. ej. la liquidación de una cosecha): cantidad 0.
+   - Solo cantidad (p. ej. los kilos recogidos, que se cobran después): importe 0.
+   - Cantidad negativa permitida para descuentos, bonificaciones y ajustes. */
+function readAmountsLibre(f) {
+  const c = parseNum(f.cantidad), p = parseNum(f.precio), t = parseNum(f.importe);
+  if (!isFinite(c) || c === 0) {
+    if (isFinite(t)) return { cantidad: 0, precio: 0, importe: round(t, 4) };
+    return { error: 'Indica la cantidad o el total' };
+  }
+  if (f.edited === 'importe' && isFinite(t)) { const importe = round(t, 4); return { cantidad: c, precio: importe / c, importe }; }
+  if (isFinite(p)) { if (p < 0) return { error: 'El precio no puede ser negativo' }; return { cantidad: c, precio: p, importe: round(c * p, 4) }; }
+  if (isFinite(t)) { const importe = round(t, 4); return { cantidad: c, precio: importe / c, importe }; }
+  return { cantidad: c, precio: 0, importe: 0 };
+}
 /* Devuelve {cantidad, precio, importe} a partir del formulario, o un texto de error. */
 function readAmounts(f, { allowNegativeQty = false, msgNeg = 'Indica la cantidad (negativa para corregir inventario)' } = {}) {
   const cantidad = parseNum(f.cantidad);
@@ -366,7 +381,7 @@ function openEntradaForm(orig) {
   draw();
 }
 
-/* ---------- Pantalla: Salidas (registro de campo) ---------- */
+/* ---------- Pantalla: Actividad (registro de campo: gastos, tareas e ingresos) ---------- */
 function movsFiltered() {
   return state.movs.filter((s) => (ui.salMes === 'todos' || monthOf(s.fecha) === ui.salMes) && (ui.salCat === 'Todas' || s.categoria === ui.salCat))
     .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts);
@@ -381,7 +396,7 @@ function renderSalidas() {
     const pill = s.categoria === 'Ingreso' ? 'in' : s.categoria === 'Tarea' ? 'task' : '';
     return `${head}<li><button class="row" data-id="${s.id}">
       <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''} · ${esc(s.finca)}${s.hist ? ' · histórico' : ''}</div></div>
-      <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${qty(s.cantidad)} × ${eur(s.precio)}</div></div>
+      <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${s.cantidad ? (s.importe ? `${qty(s.cantidad)} × ${eur(s.precio)}` : `${qty(s.cantidad)} · sin importe`) : 'solo importe'}</div></div>
     </button></li>`;
   }).join('');
   $('#view').innerHTML = `
@@ -391,7 +406,7 @@ function renderSalidas() {
     </div>
     <div class="chips" id="salCats">${['Todas', ...CATEGORIAS].map((c) => `<button class="chip" data-cat="${c}" aria-pressed="${ui.salCat === c}">${c === 'Todas' ? 'Todas' : c + 's'}</button>`).join('')}</div>
     <div class="summary"><span>Gastos <b>${eur(sum('Gasto'))}</b></span><span>Tareas <b>${eur(sum('Tarea'))}</b></span><span>Ingresos <b>${eur(sum('Ingreso'))}</b></span></div>
-    ${items.length ? `<ul class="list">${rows}</ul>` : '<div class="empty">No hay registros en este filtro.<br>Pulsa «Nueva salida» para anotar el día.</div>'}`;
+    ${items.length ? `<ul class="list">${rows}</ul>` : '<div class="empty">No hay registros en este filtro.<br>Pulsa «Nuevo registro» para anotar el día.</div>'}`;
   $('#salMes').onchange = (e) => { ui.salMes = e.target.value; renderSalidas(); };
   $('#salCats').onclick = (e) => { const b = e.target.closest('[data-cat]'); if (b) { ui.salCat = b.dataset.cat; renderSalidas(); } };
   $('#btnExport').onclick = openExportSheet;
@@ -404,7 +419,7 @@ function openMovForm(orig) {
     ? { fecha: orig.fecha, categoria: orig.categoria, tipo: orig.tipo, tipo2: orig.tipo2 || '', finca: orig.finca, desc: orig.producto ? '' : orig.desc, producto: orig.producto || '', cantidad: fmtIn(orig.cantidad), precio: fmtIn(orig.precio), importe: fmtIn(orig.importe, 4), edited: 'precio' }
     : { fecha: todayISO(), categoria: ui.lastCat, tipo: ui.lastTipo, tipo2: '', finca: '', desc: '', producto: '', cantidad: '', precio: '', importe: '', edited: 'precio' };
   const sinStock = !!(orig && orig.hist && !orig.producto); // línea del histórico del Excel: no mueve stock
-  const body = openSheet(isNew ? 'Nueva salida' : 'Editar registro', '<div id="mf"></div>');
+  const body = openSheet(isNew ? 'Nuevo registro' : 'Editar registro', '<div id="mf"></div>');
   const box = $('#mf', body);
   const descs = [...new Set(state.movs.filter((s) => !s.producto).map((s) => s.desc))].sort((a, b) => a.localeCompare(b, 'es')).slice(0, 80);
 
@@ -428,6 +443,7 @@ function openMovForm(orig) {
         <datalist id="mDl">${descs.map((d) => `<option value="${esc(d)}">`).join('')}</datalist>`}
       <div class="fld"><span>Finca</span><div class="grid2" data-k="finca">${state.fincas.filter((fi) => fi.activa !== false || fi.code === f.finca).map((fi) => `<button type="button" class="opt" data-v="${fi.code}" aria-pressed="${f.finca === fi.code}"><b>${fi.code}</b>${fi.name}</button>`).join('')}</div></div>
       ${amountsHTML(f)}
+      ${stockMode ? '' : '<p class="hint">Puedes poner solo el total (por ejemplo, una liquidación) o solo la cantidad (por ejemplo, los kilos recogidos, con importe 0).</p>'}
       <div class="actions two">
         ${isNew ? '<button class="btn" id="mSave2">Guardar y otra</button>' : '<button class="btn danger" id="mDel">Borrar</button>'}
         <button class="btn primary" id="mSave">Guardar</button>
@@ -467,8 +483,7 @@ function openMovForm(orig) {
     if (!f.finca) return toast('Elige la finca', true);
     const stockMode = isStockMode(f.categoria, f.tipo) && !sinStock;
     if (stockMode && !f.producto) return toast('Elige el producto', true);
-    // Las líneas que no mueven stock admiten cantidad negativa (descuentos, bonificaciones, ajustes)
-    const a = readAmounts(f, { allowNegativeQty: !stockMode, msgNeg: 'Indica la cantidad (negativa para un descuento o ajuste)' });
+    const a = stockMode ? readAmounts(f) : readAmountsLibre(f);
     if (a.error) return toast(a.error, true);
     const prod = stockMode ? state.productos.find((p) => p.id === f.producto) : null;
     const base = {
@@ -517,7 +532,7 @@ function download(name, text, type) {
 function openExportSheet() {
   const meses = [...new Set([monthOf(todayISO()), ...state.movs.map((s) => monthOf(s.fecha))])].sort().reverse();
   let mes = ui.salMes === 'todos' ? meses[0] : ui.salMes;
-  const body = openSheet('Exportar salidas', '<div id="xf"></div>');
+  const body = openSheet('Exportar actividad', '<div id="xf"></div>');
   const box = $('#xf', body);
   const draw = () => {
     const list = state.movs.filter((s) => mes === 'todos' || monthOf(s.fecha) === mes);
@@ -616,7 +631,7 @@ function drawSync(box) {
   if (syncOn()) {
     box.innerHTML = `
       <p class="small" id="syncLine">${esc(syncStatusText())}</p>
-      <p class="small">Cada cambio se envía solo a tu hoja de Google (pestañas Salidas, Entradas y Stock). Sin conexión se queda pendiente y se envía al volver.</p>
+      <p class="small">Cada cambio se envía solo a tu hoja de Google (pestañas Tabla principal, Entradas y Stock). Sin conexión se queda pendiente y se envía al volver.</p>
       <div class="actions">
         <button class="btn primary" id="syNow">Sincronizar ahora</button>
         <button class="btn" id="syRes">Restaurar desde la hoja</button>
@@ -1247,7 +1262,7 @@ function openHistorico(j) {
       ${r.nuevas.length ? `<div><span>Fechas</span><b>${fmtDate(fs[0])} – ${fmtDate(fs[fs.length - 1])}</b></div><div><span>Importe de lo que se añade</span><b>${eur(imp)}</b></div>` : ''}
     </div>
     ${r.faltan.length ? `<p class="hint" style="color:var(--danger)">No encuentro estas fincas en la app: ${r.faltan.map(esc).join(', ')}. Sus líneas no se cargan; conecta los maestros y vuelve a intentarlo.</p>` : ''}
-    <p class="hint">No mueven el stock. Aparecen en Salidas en su mes, marcadas como histórico, y se envían a la Tabla principal de tu hoja.</p>
+    <p class="hint">No mueven el stock. Aparecen en Actividad en su mes, marcadas como histórico, y se envían a la Tabla principal de tu hoja.</p>
     <div class="actions"><button class="btn primary" id="hOk" ${r.nuevas.length ? '' : 'disabled'}>Añadir ${r.nuevas.length} líneas</button></div>`);
   $('#hOk', body).onclick = () => {
     if (commit((c) => { const ya = new Set(c.movs.map((s) => s.id)); for (const l of r.nuevas) if (!ya.has(l.id)) c.movs.push(l); })) { closeSheet(); toast(`Histórico cargado: ${r.nuevas.length} líneas`); }
@@ -1260,7 +1275,7 @@ function renderAll() {
   $('#totalValor').textContent = eur(totalValor(m));
   document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   renderSyncStatus(); renderMxStatus();
-  $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nueva salida';
+  $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nuevo registro';
   if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else renderSalidas();
   if (appVacia()) {
     $('#view').insertAdjacentHTML('afterbegin', `<div class="notice"><b>Este móvil todavía no tiene datos</b><p class="small">La app ya no lleva el stock dentro. Restáuralo una vez desde Ajustes: «Copia automática en Google Sheets» → «Restaurar desde la hoja», o «Restaurar desde fichero» con la copia guardada en Drive (Apps › Copia de seguridad).</p><button class="btn primary" id="goAj">Abrir Ajustes</button></div>`);

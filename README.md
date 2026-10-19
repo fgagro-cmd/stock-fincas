@@ -1,6 +1,6 @@
 # Gestión fincas (antes Stock Fincas)
 
-App de las fincas propias: stock, entradas y salidas (registro de campo), para el móvil Android. Funciona sin conexión.
+App de las fincas propias: stock, entradas y actividad (registro de campo: gastos, tareas e ingresos), para el móvil Android. Funciona sin conexión.
 
 **El código no lleva datos** (el repositorio es público). En un móvil nuevo la app empieza vacía y se restaura desde la hoja de Google («Restaurar desde la hoja») o desde un fichero de copia (Ajustes → «Restaurar desde fichero»). El stock de partida del Excel está guardado como copia en Drive › Apps › Copia de seguridad.
 
@@ -17,8 +17,11 @@ Las ventas a tus fincas (cliente propio) de la app Ventas entran solas como entr
 ## Publicar (GitHub Pages)
 Settings → Pages → rama `main`, carpeta `/ (root)`. Después abrir la dirección en Chrome del móvil → ⋮ → «Instalar aplicación».
 
+## Actividad
+Cada registro es un gasto, una tarea o un ingreso. Los gastos de productos con stock necesitan producto y cantidad. El resto admite solo el total (por ejemplo, la liquidación de una cosecha, con cantidad 0) o solo la cantidad (por ejemplo, los kilos recogidos, con importe 0), y cantidades negativas para descuentos o ajustes.
+
 ## Histórico del Excel
-Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se cargan una vez desde Ajustes → «Cargar histórico del Excel» con el fichero de Drive › Apps › Copia de seguridad (`gestion-fincas-historico-excel.json`). Entran como registros «histórico»: no mueven el stock, se pueden corregir y salen en la Tabla principal. Cargarlo otra vez solo añade lo que falte. Todos los tipos van con tilde (Fumigación, Subvención, Estiércol, Enmienda orgánica).
+Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se cargan una vez desde Ajustes → «Cargar histórico del Excel» con el fichero de Drive › Apps › Copia de seguridad (`gestion-fincas-historico-excel.json`). Entran como registros «histórico»: no mueven el stock, se pueden corregir y salen en la Tabla principal y en la pestaña Actividad. Cargarlo otra vez solo añade lo que falte. Todos los tipos van con tilde (Fumigación, Subvención, Estiércol, Enmienda orgánica).
 
 ## Copia automática en Google Sheets
 1. Crea una hoja de Google nueva (por ejemplo «Stock Fincas»).
