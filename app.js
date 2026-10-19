@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.1.1';
+const APP_VERSION = '2.1.2';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -553,7 +553,7 @@ function markDirty() {
 }
 async function callScript(accion, extra = {}) {
   const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), 30000);
+  const t = setTimeout(() => ctrl.abort(), 180000); // con el histórico, Google tarda más en escribir la Tabla principal
   try {
     // Sin cabeceras propias: así es una petición simple (text/plain) y Google no exige comprobación previa.
     const res = await fetch(sync.url, { method: 'POST', body: JSON.stringify({ accion, clave: sync.clave, ...extra }), signal: ctrl.signal });
@@ -568,12 +568,11 @@ async function callScript(accion, extra = {}) {
 function syncPayload() {
   const m = computeStock();
   const byId = new Map(state.productos.map((p) => [p.id, p]));
-  const salidas = [...state.movs].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe]);
   const entradas = [...state.entradas].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts).map((e) => { const p = byId.get(e.producto); return [e.fecha, p ? p.nombre : '(producto borrado)', p ? p.categoria : '', e.cantidad, e.cantidad ? round(e.importe / e.cantidad, 6) : 0, e.importe]; });
   const stock = [...m.values()].sort((a, b) => CAT_STOCK.indexOf(a.p.categoria) - CAT_STOCK.indexOf(b.p.categoria) || a.p.nombre.localeCompare(b.p.nombre, 'es'))
     .map((x) => [x.p.nombre, x.p.categoria, x.q, x.avg != null ? round(x.avg, 4) : '', x.q > EPS ? round(x.v, 2) : 0]);
   const tabla = [...state.movs].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe, MESES[Number(s.fecha.slice(5, 7)) - 1], Number(s.fecha.slice(0, 4))]);
-  return { tabla, salidas, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+  return { tabla, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
 }
 async function runSync() {
   if (!syncOn() || syncRunning) return;

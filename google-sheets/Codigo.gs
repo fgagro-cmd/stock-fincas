@@ -71,7 +71,7 @@ function escribirTabla(nombre, cabecera, filas, formatos) {
     sh.getRange(2, 1, filas.length, cabecera.length).setValues(filas);
     formatos.forEach(function (f, i) { if (f) sh.getRange(2, i + 1, filas.length, 1).setNumberFormat(f); });
   }
-  sh.autoResizeColumns(1, cabecera.length);
+  if (filas.length <= 300) sh.autoResizeColumns(1, cabecera.length); // en tablas grandes es lento
 }
 
 /* Las versiones antiguas de la app mandan «salidas» (10 columnas, la más antigua arriba): se convierten. */
