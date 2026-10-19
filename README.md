@@ -31,6 +31,18 @@ Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se
 
 Para **actualizar** el script sin cambiar la dirección: pega el código nuevo → Guardar → Implementar → Gestionar implementaciones → lápiz → Versión: «Nueva versión» → Implementar. Si pide permisos (lee el «Maestro de fincas» de tu Drive), acéptalos.
 
+**Permiso de Drive** (para que Cuentas fincas lea superficie y árboles del «Maestro de fincas»):
+1. Apps Script → ⚙ Configuración del proyecto → marca «Mostrar el archivo de manifiesto appsscript.json».
+2. En el editor abre `appsscript.json` y deja el contenido de `google-sheets/appsscript.json` → Guardar.
+3. Si ejecutar no pide permiso (Google ya dio permisos parciales), pega esta función, ejecútala una vez y acepta el permiso de Drive:
+   ```javascript
+   function autorizarDrive() {
+     ScriptApp.requireScopes(ScriptApp.AuthMode.FULL, ['https://www.googleapis.com/auth/drive.readonly']);
+     Logger.log(JSON.stringify(fincasMaestro()));
+   }
+   ```
+4. Implementar → Gestionar implementaciones → lápiz → «Nueva versión» → Implementar.
+
 La app reescribe las pestañas Tabla principal (todas las líneas con las 12 columnas de tu Excel, la más reciente arriba), Entradas y Stock en cada envío. La clave nunca se sube a GitHub: se guarda solo en el móvil y en el script de tu hoja.
 
 ## Cuentas fincas
