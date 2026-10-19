@@ -3,16 +3,16 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.0.1';
+const APP_VERSION = '2.1.0';
 const APP_NAME = 'Gestión fincas';
 
-/* ---------- Listas fijas (textos tal como los lee el Excel de Gestión de fincas) ---------- */
+/* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
 const CAT_STOCK = ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimulantes']; // los únicos que mueven stock
 const CATEGORIAS = ['Ingreso', 'Gasto', 'Tarea'];
 const TIPOS = {
   Ingreso: ['Cosecha', 'Subvención', 'Otros ingresos'],
   Gasto: ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimulantes', 'Combustible', 'Material de riego', 'Agua de riego', 'Enmienda orgánica', 'Arrendamiento', 'Otros'],
-  Tarea: ['Fumigacion', 'Labrar', 'Desbrozar', 'Poda', 'Herbicida', 'Mantenimiento', 'Mejoras', 'Estiércol', 'Recolección', 'Otras tareas'],
+  Tarea: ['Fumigación', 'Labrar', 'Desbrozar', 'Poda', 'Herbicida', 'Mantenimiento', 'Mejoras', 'Estiércol', 'Recolección', 'Otras tareas'],
 };
 const TIPO2 = ['Con maquinaria', 'Sin maquinaria', 'Contratado'];
 // Fincas de partida (los códigos con los que se guardaban los registros). Desde la v2 la lista vive en
@@ -27,6 +27,7 @@ const FINCAS_BASE = [
 ];
 const EXPORT_HEADER = ['Fecha', 'Descripción', 'Campaña', 'Categoria', 'Tipo', 'Tipo 2', 'Finca', 'Cantidad', 'Precio', 'Importe'];
 const EPS = 0.0005;
+const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 /* ---------- Utilidades ---------- */
 const $ = (s, r = document) => r.querySelector(s);
@@ -88,13 +89,21 @@ function persist() {
   return saveChain;
 }
 function emptyState() {
-  return { v: 2, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [] };
+  return { v: 3, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [] };
 }
-/* v1 → v2: lista de fincas en los datos, enlace con maestros y cola de altas. No cambia ningún registro. */
+/* v1 → v2: lista de fincas en los datos, enlace con maestros y cola de altas. No cambia ningún registro.
+   v2 → v3: tipos con tilde (Fumigacion → Fumigación, etc.). Solo cambia el texto del tipo. */
+const TIPO_TILDE = { Fumigacion: 'Fumigación', Subvencion: 'Subvención', Estiercol: 'Estiércol', 'Enmienda organica': 'Enmienda orgánica' };
 function migrar(s) {
   if (!Array.isArray(s.fincas)) s.fincas = structuredClone(FINCAS_BASE);
   if (!Array.isArray(s.mxPend)) s.mxPend = [];
-  if (!s.v || s.v < 2) s.v = 2;
+  if (!s.v || s.v < 3) {
+    for (const m of s.movs || []) {
+      const nuevo = TIPO_TILDE[m.tipo];
+      if (nuevo) { if (m.desc === m.tipo) m.desc = nuevo; m.tipo = nuevo; }
+    }
+  }
+  s.v = 3;
   return s;
 }
 const appVacia = () => !state.productos.length && !state.movs.length && !state.entradas.length;
@@ -371,7 +380,7 @@ function renderSalidas() {
     const head = s.fecha !== lastDay ? `<li class="day">${dayLabel(s.fecha)}</li>` : ''; lastDay = s.fecha;
     const pill = s.categoria === 'Ingreso' ? 'in' : s.categoria === 'Tarea' ? 'task' : '';
     return `${head}<li><button class="row" data-id="${s.id}">
-      <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''} · ${esc(s.finca)}</div></div>
+      <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''} · ${esc(s.finca)}${s.hist ? ' · histórico' : ''}</div></div>
       <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${qty(s.cantidad)} × ${eur(s.precio)}</div></div>
     </button></li>`;
   }).join('');
@@ -394,17 +403,19 @@ function openMovForm(orig) {
   const f = orig
     ? { fecha: orig.fecha, categoria: orig.categoria, tipo: orig.tipo, tipo2: orig.tipo2 || '', finca: orig.finca, desc: orig.producto ? '' : orig.desc, producto: orig.producto || '', cantidad: fmtIn(orig.cantidad), precio: fmtIn(orig.precio), importe: fmtIn(orig.importe, 4), edited: 'precio' }
     : { fecha: todayISO(), categoria: ui.lastCat, tipo: ui.lastTipo, tipo2: '', finca: '', desc: '', producto: '', cantidad: '', precio: '', importe: '', edited: 'precio' };
+  const sinStock = !!(orig && orig.hist && !orig.producto); // línea del histórico del Excel: no mueve stock
   const body = openSheet(isNew ? 'Nueva salida' : 'Editar registro', '<div id="mf"></div>');
   const box = $('#mf', body);
   const descs = [...new Set(state.movs.filter((s) => !s.producto).map((s) => s.desc))].sort((a, b) => a.localeCompare(b, 'es')).slice(0, 80);
 
   const draw = () => {
-    const stockMode = isStockMode(f.categoria, f.tipo);
+    const stockMode = isStockMode(f.categoria, f.tipo) && !sinStock;
     const m = computeStock();
     const prods = stockMode ? [...m.values()].filter((x) => x.p.categoria === f.tipo).sort((a, b) => a.p.nombre.localeCompare(b.p.nombre, 'es')) : [];
     const sel = stockMode && f.producto ? m.get(f.producto) : null;
     const own = !isNew && orig.producto === f.producto ? orig.cantidad : 0; // lo que ya descuenta esta misma salida
     box.innerHTML = `
+      ${sinStock ? '<p class="hint" style="margin-top:0">Línea del histórico del Excel: no mueve stock.</p>' : ''}
       <label class="fld"><span>Fecha</span><input id="mFe" type="date" value="${f.fecha}"></label>
       <div class="fld"><span>Categoría</span><div class="chips" data-k="categoria">${CATEGORIAS.map((c) => `<button type="button" class="chip" data-v="${c}" aria-pressed="${f.categoria === c}">${c}</button>`).join('')}</div></div>
       <div class="fld"><span>Tipo</span><div class="chips wrap" data-k="tipo">${TIPOS[f.categoria].map((t) => `<button type="button" class="chip" data-v="${esc(t)}" aria-pressed="${f.tipo === t}">${esc(t)}</button>`).join('')}</div></div>
@@ -454,7 +465,7 @@ function openMovForm(orig) {
   const save = (again) => {
     if (!f.fecha) return toast('Indica la fecha', true);
     if (!f.finca) return toast('Elige la finca', true);
-    const stockMode = isStockMode(f.categoria, f.tipo);
+    const stockMode = isStockMode(f.categoria, f.tipo) && !sinStock;
     if (stockMode && !f.producto) return toast('Elige el producto', true);
     const a = readAmounts(f);
     if (a.error) return toast(a.error, true);
@@ -513,7 +524,7 @@ function openExportSheet() {
     box.innerHTML = `
       <label class="fld"><span>Periodo</span><select id="xM">${meses.map((m) => `<option value="${m}" ${m === mes ? 'selected' : ''}>${monthLabel(m)}</option>`).join('')}<option value="todos" ${mes === 'todos' ? 'selected' : ''}>Todos los meses</option></select></label>
       <div class="box"><div><span>Filas</span><b>${list.length}</b></div><div><span>Gastos + tareas</span><b>${eur(tot)}</b></div></div>
-      <p class="hint">Mismo orden de columnas que tu Excel de Gestión de fincas: Fecha, Descripción, Campaña, Categoria, Tipo, Tipo 2, Finca, Cantidad, Precio, Importe (sin Mes ni Año).</p>
+      <p class="hint">Mismo orden de columnas que tu Excel de Gestión de fincas: Fecha, Descripción, Campaña, Categoria, Tipo, Tipo 2, Finca, Cantidad, Precio, Importe (sin Mes ni Año). La tabla completa, con Mes y Año, está siempre en la pestaña «Tabla principal» de tu hoja de Google.</p>
       <div class="actions">
         <button class="btn primary" id="xC" ${list.length ? '' : 'disabled'}>Copiar para pegar en Sheets</button>
         <button class="btn" id="xD" ${list.length ? '' : 'disabled'}>Descargar CSV (con cabecera)</button>
@@ -560,7 +571,8 @@ function syncPayload() {
   const entradas = [...state.entradas].sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts).map((e) => { const p = byId.get(e.producto); return [e.fecha, p ? p.nombre : '(producto borrado)', p ? p.categoria : '', e.cantidad, e.cantidad ? round(e.importe / e.cantidad, 6) : 0, e.importe]; });
   const stock = [...m.values()].sort((a, b) => CAT_STOCK.indexOf(a.p.categoria) - CAT_STOCK.indexOf(b.p.categoria) || a.p.nombre.localeCompare(b.p.nombre, 'es'))
     .map((x) => [x.p.nombre, x.p.categoria, x.q, x.avg != null ? round(x.avg, 4) : '', x.q > EPS ? round(x.v, 2) : 0]);
-  return { salidas, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+  const tabla = [...state.movs].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe, MESES[Number(s.fecha.slice(5, 7)) - 1], Number(s.fecha.slice(0, 4))]);
+  return { tabla, salidas, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
 }
 async function runSync() {
   if (!syncOn() || syncRunning) return;
@@ -1156,6 +1168,10 @@ function openSettings() {
     <h3>Copia automática en Google Sheets</h3>
     <div id="syncBox"></div>
     <div class="sep"></div>
+    <h3>Histórico del Excel de Gestión de fincas</h3>
+    <p class="small">${histInfo()} El fichero está en Drive › Apps › Copia de seguridad (gestion-fincas-historico-excel.json). Cargarlo otra vez solo añade lo que falte; no duplica ni toca el stock.</p>
+    <div class="actions"><label class="btn" style="display:grid;place-items:center;cursor:pointer">Cargar histórico del Excel<input id="sHi" type="file" accept="application/json,.json" hidden></label></div>
+    <div class="sep"></div>
     <h3>Copia de seguridad en fichero</h3>
     <p class="small">Los datos viven en este móvil. Puedes guardar un fichero con todo (por ejemplo en Drive o WhatsApp).${state.settings.lastBackup ? ` Última copia: ${new Date(state.settings.lastBackup).toLocaleString('es-ES')}.` : ' Aún no has hecho ninguna.'}</p>
     <div class="actions">
@@ -1173,6 +1189,11 @@ function openSettings() {
     state.settings.campana = n; persist(); toast('Campaña guardada: ' + n);
   };
   $('#sBk', body).onclick = shareOrDownloadBackup;
+  $('#sHi', body).onchange = async (e) => {
+    const file = e.target.files[0]; e.target.value = ''; if (!file) return;
+    try { const j = JSON.parse(await file.text()); reopenSheet(() => openHistorico(j)); }
+    catch (err) { toast('No se pudo leer el fichero: ' + (err.message || err), true); }
+  };
   $('#sRs', body).onchange = async (e) => {
     const file = e.target.files[0]; if (!file) return;
     try {
@@ -1183,6 +1204,53 @@ function openSettings() {
       state = migrar(s); await persist(); closeSheet(); renderAll(); toast('Copia restaurada'); if (mxOn()) refreshMx({});
     } catch (err) { toast(err.message || 'No se pudo leer la copia', true); }
     e.target.value = '';
+  };
+}
+
+/* ---------- Histórico del Excel ----------
+   Las líneas del Excel entran como registros «histórico» sin producto: cuentan para Cuentas fincas y la
+   Tabla principal, pero no mueven el stock. Cada línea lleva un identificador fijo (h0001…), así que
+   cargar el fichero otra vez solo añade las que falten. */
+const reopenSheet = (fn) => { closeSheet(); setTimeout(fn, 40); };
+function histInfo() {
+  const h = state.movs.filter((s) => s.hist);
+  if (!h.length) return 'Todavía no está cargado.';
+  const fs = h.map((s) => s.fecha).sort();
+  return `Cargado: ${h.length} líneas (${fmtDate(fs[0])} a ${fmtDate(fs[fs.length - 1])}).`;
+}
+function lineasHistorico(j) {
+  if (!j || j.app !== 'gestion-fincas-historico' || !Array.isArray(j.lineas)) throw new Error('El fichero no es el histórico del Excel de Gestión de fincas');
+  const porMid = new Map(state.fincas.filter((f) => f.mid).map((f) => [f.mid, f]));
+  const porNombre = new Map(state.fincas.map((f) => [f.name.toLowerCase(), f]));
+  const ya = new Set(state.movs.map((s) => s.id));
+  const faltan = new Set(); const nuevas = []; let yaN = 0;
+  for (const l of j.lineas) {
+    if (ya.has(l.id)) { yaN++; continue; }
+    const fi = porMid.get(l.fincaId) || porNombre.get(String(l.finca).toLowerCase());
+    if (!fi) { faltan.add(l.finca); continue; }
+    const tipo = TIPO_TILDE[l.tipo] || l.tipo;
+    if (!TIPOS[l.categoria] || !TIPOS[l.categoria].includes(tipo)) throw new Error(`Tipo desconocido en el histórico: ${l.categoria} · ${l.tipo}`);
+    nuevas.push({ id: l.id, ts: Number(l.ts) || 0, hist: true, campana: Number(l.campana), fecha: l.fecha, categoria: l.categoria, tipo, tipo2: l.categoria === 'Tarea' ? (l.tipo2 || '') : '', finca: fi.code, desc: l.desc || tipo, producto: null, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, importe: Number(l.importe) || 0 });
+  }
+  return { nuevas, faltan: [...faltan], total: j.lineas.length, yaN };
+}
+function openHistorico(j) {
+  let r;
+  try { r = lineasHistorico(j); } catch (e) { return toast(e.message, true); }
+  const imp = r.nuevas.reduce((t, l) => t + l.importe, 0);
+  const fs = r.nuevas.map((l) => l.fecha).sort();
+  const body = openSheet('Cargar histórico del Excel', `
+    <div class="box">
+      <div><span>Líneas en el fichero</span><b>${r.total}</b></div>
+      <div><span>Ya estaban en la app</span><b>${r.yaN}</b></div>
+      <div><span>Se añaden</span><b>${r.nuevas.length}</b></div>
+      ${r.nuevas.length ? `<div><span>Fechas</span><b>${fmtDate(fs[0])} – ${fmtDate(fs[fs.length - 1])}</b></div><div><span>Importe de lo que se añade</span><b>${eur(imp)}</b></div>` : ''}
+    </div>
+    ${r.faltan.length ? `<p class="hint" style="color:var(--danger)">No encuentro estas fincas en la app: ${r.faltan.map(esc).join(', ')}. Sus líneas no se cargan; conecta los maestros y vuelve a intentarlo.</p>` : ''}
+    <p class="hint">No mueven el stock. Aparecen en Salidas en su mes, marcadas como histórico, y se envían a la Tabla principal de tu hoja.</p>
+    <div class="actions"><button class="btn primary" id="hOk" ${r.nuevas.length ? '' : 'disabled'}>Añadir ${r.nuevas.length} líneas</button></div>`);
+  $('#hOk', body).onclick = () => {
+    if (commit((c) => { const ya = new Set(c.movs.map((s) => s.id)); for (const l of r.nuevas) if (!ya.has(l.id)) c.movs.push(l); })) { closeSheet(); toast(`Histórico cargado: ${r.nuevas.length} líneas`); }
   };
 }
 
@@ -1218,7 +1286,7 @@ async function init() {
   try {
     let s = await dbGet('state');
     if (!s) { s = emptyState(); await dbSet('state', s); }
-    else if (!s.v || s.v < 2) { migrar(s); await dbSet('state', s); }
+    else if (!s.v || s.v < 3) { migrar(s); await dbSet('state', s); }
     state = migrar(s);
   } catch (e) {
     state = emptyState();

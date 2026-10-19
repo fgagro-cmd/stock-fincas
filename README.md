@@ -17,13 +17,21 @@ Las ventas a tus fincas (cliente propio) de la app Ventas entran solas como entr
 ## Publicar (GitHub Pages)
 Settings → Pages → rama `main`, carpeta `/ (root)`. Después abrir la dirección en Chrome del móvil → ⋮ → «Instalar aplicación».
 
-## Copia automática en Google Sheets (opcional)
+## Histórico del Excel
+Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se cargan una vez desde Ajustes → «Cargar histórico del Excel» con el fichero de Drive › Apps › Copia de seguridad (`gestion-fincas-historico-excel.json`). Entran como registros «histórico»: no mueven el stock, se pueden corregir y salen en la Tabla principal. Cargarlo otra vez solo añade lo que falte. Todos los tipos van con tilde (Fumigación, Subvención, Estiércol, Enmienda orgánica).
+
+## Copia automática en Google Sheets
 1. Crea una hoja de Google nueva (por ejemplo «Stock Fincas»).
 2. Extensiones → Apps Script. Borra lo que haya, pega el contenido de `google-sheets/Codigo.gs` y cambia `CAMBIA-ESTA-CLAVE` por una clave larga propia. Guarda.
 3. Implementar → Nueva implementación → tipo «Aplicación web» → Ejecutar como: **Yo** → Quién tiene acceso: **Cualquier usuario** → Implementar. Autoriza los permisos y copia la dirección (termina en `/exec`).
 4. En la app: Ajustes → Copia automática en Google Sheets → pega la dirección y la clave → «Probar y activar».
 
-La hoja es un espejo de un solo sentido: la app reescribe las pestañas Salidas, Entradas y Stock en cada envío. La clave nunca se sube a GitHub: se guarda solo en el móvil y en el script de tu hoja.
+Para **actualizar** el script sin cambiar la dirección: pega el código nuevo → Guardar → Implementar → Gestionar implementaciones → lápiz → Versión: «Nueva versión» → Implementar. Si pide permisos (lee el «Maestro de fincas» de tu Drive), acéptalos.
+
+La app reescribe las pestañas Tabla principal (todas las líneas con las 12 columnas de tu Excel, la más reciente arriba), Entradas y Stock en cada envío. La clave nunca se sube a GitHub: se guarda solo en el móvil y en el script de tu hoja.
+
+## Cuentas fincas
+La app Cuentas fincas usa esta misma hoja (misma dirección y clave): lee la Tabla principal y guarda los presupuestos y parámetros en las pestañas «Presupuestos» y «Parámetros», que esta app nunca toca.
 
 ## Actualizaciones
 Al cambiar cualquier fichero, sube `VERSION` en `sw.js` para que los móviles recojan la nueva versión. Los datos del móvil se guardan con el nombre interno `stock-fincas`: no cambiarlo o se perderían.
