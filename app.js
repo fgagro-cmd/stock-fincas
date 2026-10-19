@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.1.0';
+const APP_VERSION = '2.1.1';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -280,9 +280,9 @@ function bindAmounts(root, f) {
   q.oninput = () => sync('q'); p.oninput = () => sync('p'); t.oninput = () => sync('t');
 }
 /* Devuelve {cantidad, precio, importe} a partir del formulario, o un texto de error. */
-function readAmounts(f, { allowNegativeQty = false } = {}) {
+function readAmounts(f, { allowNegativeQty = false, msgNeg = 'Indica la cantidad (negativa para corregir inventario)' } = {}) {
   const cantidad = parseNum(f.cantidad);
-  if (!isFinite(cantidad) || cantidad === 0 || (!allowNegativeQty && cantidad < 0)) return { error: allowNegativeQty ? 'Indica la cantidad (negativa para corregir inventario)' : 'Indica una cantidad mayor que 0' };
+  if (!isFinite(cantidad) || cantidad === 0 || (!allowNegativeQty && cantidad < 0)) return { error: allowNegativeQty ? msgNeg : 'Indica una cantidad mayor que 0' };
   const p = parseNum(f.precio), t = parseNum(f.importe);
   let precio, importe;
   if (f.edited === 'importe' && isFinite(t)) { importe = round(t, 4); precio = importe / cantidad; }
@@ -467,7 +467,8 @@ function openMovForm(orig) {
     if (!f.finca) return toast('Elige la finca', true);
     const stockMode = isStockMode(f.categoria, f.tipo) && !sinStock;
     if (stockMode && !f.producto) return toast('Elige el producto', true);
-    const a = readAmounts(f);
+    // Las líneas que no mueven stock admiten cantidad negativa (descuentos, bonificaciones, ajustes)
+    const a = readAmounts(f, { allowNegativeQty: !stockMode, msgNeg: 'Indica la cantidad (negativa para un descuento o ajuste)' });
     if (a.error) return toast(a.error, true);
     const prod = stockMode ? state.productos.find((p) => p.id === f.producto) : null;
     const base = {
