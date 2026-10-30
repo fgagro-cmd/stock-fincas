@@ -1,9 +1,9 @@
 // Service worker: la app funciona sin conexión (cache primero, se actualiza en segundo plano).
 // Al cambiar cualquier fichero de la app, sube VERSION para que los móviles recojan la nueva versión.
-const VERSION = 'v2.2.0';
+const VERSION = 'v2.3.0';
 const CACHE = 'stock-fincas-' + VERSION;
 const ASSETS = [
-  './', 'index.html', 'style.css', 'app.js', 'maestros.js', 'manifest.webmanifest',
+  './', 'index.html', 'style.css', 'app.js', 'maestros.js', 'xlsx.js', 'manifest.webmanifest',
   'icons/icon-192.png', 'icons/icon-512.png', 'icons/icon-maskable-512.png'
 ];
 

@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.2.0';
+const APP_VERSION = '2.3.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -139,7 +139,7 @@ function commit(mutator) {
 const isStockMode = (categoria, tipo) => categoria === 'Gasto' && CAT_STOCK.includes(tipo);
 
 /* ---------- UI: estado de pantalla ---------- */
-const ui = { tab: 'salidas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
+const ui = { tab: 'salidas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), expFinca: '', expMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
 
 let toastTimer;
 function toast(msg, err = false) {
@@ -550,6 +550,82 @@ function openExportSheet() {
     $('#xD', box).onclick = () => { download(`salidas-${mes === 'todos' ? 'todas' : mes}.csv`, toCSV(exportRows(list)), 'text/csv;charset=utf-8'); toast('CSV descargado'); };
   };
   draw();
+}
+
+/* ---------- Pantalla: Exportar (Excel de contabilidad de una finca y un mes) ----------
+   Columnas del Excel de contabilidad: Importe = precio por unidad; Total = lo que suma la línea.
+   Las líneas con solo total (cantidad 0) dejan Cantidad e Importe vacíos. */
+const CONTA_HEADER = ['Fecha', 'Descripción', 'Categoría', 'Tipo 1', 'Tipo 2', 'Finca', 'Cantidad', 'Importe', 'Total'];
+const CONTA_TIPOS = ['fecha', 'texto', 'texto', 'texto', 'texto', 'texto', 'numero', 'euros', 'euros'];
+const CONTA_ANCHOS = [11, 34, 11, 18, 15, 22, 11, 12, 13];
+function fincasExport() {
+  const usadas = new Set(state.movs.map((s) => s.finca));
+  return state.fincas.filter((f) => f.activa !== false || usadas.has(f.code));
+}
+const nombreFinca = (code) => (code === 'todas' ? 'Todas las fincas' : fincaByCode(code)?.name ?? code);
+function movsExport(finca, mes) {
+  return state.movs.filter((s) => (finca === 'todas' || s.finca === finca) && monthOf(s.fecha) === mes)
+    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts);
+}
+function filasConta(list) {
+  return list.map((s) => {
+    const soloTotal = !s.cantidad;
+    return [s.fecha, s.desc, s.categoria, s.tipo, s.tipo2 || '', nombreFinca(s.finca),
+      soloTotal ? '' : round(s.cantidad, 4), soloTotal ? '' : round(s.precio, 6), round(s.importe, 2)];
+  });
+}
+function excelConta(finca, mes) {
+  const list = movsExport(finca, mes);
+  const blob = XLSX_MIN.libro({ nombre: 'Contabilidad', cabecera: CONTA_HEADER, tipos: CONTA_TIPOS, anchos: CONTA_ANCHOS, filas: filasConta(list) });
+  // Nombre sin tildes ni «ñ»: algunos navegadores descartan el nombre si las lleva y guardan «download»
+  const name = `Contabilidad ${nombreFinca(finca)} ${mes}.xlsx`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w .-]/g, ' ').replace(/\s+/g, ' ');
+  return { blob, name, n: list.length };
+}
+function renderExportar() {
+  const fincas = fincasExport();
+  if (!ui.expFinca || (ui.expFinca !== 'todas' && !fincas.some((f) => f.code === ui.expFinca))) ui.expFinca = fincas[0]?.code || 'todas';
+  const deLaFinca = state.movs.filter((s) => ui.expFinca === 'todas' || s.finca === ui.expFinca);
+  const porMes = new Map(); for (const s of deLaFinca) { const k = monthOf(s.fecha); porMes.set(k, (porMes.get(k) || 0) + 1); }
+  const meses = [...new Set([monthOf(todayISO()), ui.expMes, ...porMes.keys()])].sort().reverse();
+  const items = movsExport(ui.expFinca, ui.expMes);
+  const sum = (cat) => items.filter((s) => s.categoria === cat).reduce((t, s) => t + s.importe, 0);
+  let lastDay = '';
+  const rows = [...items].reverse().map((s) => {
+    const head = s.fecha !== lastDay ? `<li class="day">${dayLabel(s.fecha)}</li>` : ''; lastDay = s.fecha;
+    const pill = s.categoria === 'Ingreso' ? 'in' : s.categoria === 'Tarea' ? 'task' : '';
+    return `${head}<li><button class="row" data-id="${s.id}">
+      <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''}${ui.expFinca === 'todas' ? ' · ' + esc(s.finca) : ''}</div></div>
+      <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${s.cantidad ? `${qty(s.cantidad)} × ${eur(s.precio)}` : 'solo total'}</div></div>
+    </button></li>`;
+  }).join('');
+  const puedeCompartir = !!(navigator.canShare && window.File);
+  $('#view').innerHTML = `
+    <div class="fld" style="margin-bottom:10px"><span>Finca</span><select id="xpF" aria-label="Finca">${fincas.map((f) => `<option value="${f.code}" ${f.code === ui.expFinca ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="todas" ${ui.expFinca === 'todas' ? 'selected' : ''}>Todas las fincas</option></select></div>
+    <div class="fld" style="margin-bottom:10px"><span>Mes</span><select id="xpM" aria-label="Mes">${meses.map((mm) => `<option value="${mm}" ${mm === ui.expMes ? 'selected' : ''}>${monthLabel(mm)}${porMes.get(mm) ? ` · ${porMes.get(mm)} ${porMes.get(mm) === 1 ? 'registro' : 'registros'}` : ' · sin registros'}</option>`).join('')}</select></div>
+    <div class="summary"><span><b>${items.length}</b> ${items.length === 1 ? 'registro' : 'registros'}</span><span>Gastos <b>${eur(sum('Gasto'))}</b></span><span>Tareas <b>${eur(sum('Tarea'))}</b></span><span>Ingresos <b>${eur(sum('Ingreso'))}</b></span></div>
+    <div class="actions ${puedeCompartir ? 'two' : ''}" style="margin:12px 0">
+      <button class="btn primary" id="xpD" ${items.length ? '' : 'disabled'}>Descargar Excel</button>
+      ${puedeCompartir ? `<button class="btn" id="xpS" ${items.length ? '' : 'disabled'}>Compartir</button>` : ''}
+    </div>
+    <p class="hint" style="margin-top:0">Columnas: Fecha, Descripción, Categoría, Tipo 1, Tipo 2, Finca, Cantidad, Importe (precio por unidad) y Total. Las líneas con solo total dejan vacíos Cantidad e Importe.</p>
+    ${items.length ? `<ul class="list">${rows}</ul>` : '<div class="empty">No hay registros de esta finca en este mes.</div>'}`;
+  $('#xpF').onchange = (e) => { ui.expFinca = e.target.value; renderExportar(); };
+  $('#xpM').onchange = (e) => { ui.expMes = e.target.value; renderExportar(); };
+  $('#xpD').onclick = () => {
+    const x = excelConta(ui.expFinca, ui.expMes);
+    const url = URL.createObjectURL(x.blob);
+    const a = document.createElement('a'); a.href = url; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 4000);
+    toast(`Excel descargado · ${x.n} registros`);
+  };
+  const sh = $('#xpS');
+  if (sh) sh.onclick = async () => {
+    const x = excelConta(ui.expFinca, ui.expMes);
+    const file = new File([x.blob], x.name, { type: x.blob.type });
+    if (!navigator.canShare({ files: [file] })) return toast('Este móvil no deja compartir Excel: usa «Descargar Excel»', true);
+    try { await navigator.share({ files: [file], title: x.name }); } catch (e) { if (!e || e.name !== 'AbortError') toast('No se pudo compartir: usa «Descargar Excel»', true); }
+  };
+  const ul = $('#view .list'); if (ul) ul.onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) openMovForm(state.movs.find((x) => x.id === b.dataset.id)); };
 }
 
 /* ---------- Copia automática en Google Sheets ----------
@@ -1276,7 +1352,8 @@ function renderAll() {
   document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   renderSyncStatus(); renderMxStatus();
   $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nuevo registro';
-  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else renderSalidas();
+  $('#fab').style.display = ui.tab === 'exportar' ? 'none' : '';
+  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else if (ui.tab === 'exportar') renderExportar(); else renderSalidas();
   if (appVacia()) {
     $('#view').insertAdjacentHTML('afterbegin', `<div class="notice"><b>Este móvil todavía no tiene datos</b><p class="small">La app ya no lleva el stock dentro. Restáuralo una vez desde Ajustes: «Copia automática en Google Sheets» → «Restaurar desde la hoja», o «Restaurar desde fichero» con la copia guardada en Drive (Apps › Copia de seguridad).</p><button class="btn primary" id="goAj">Abrir Ajustes</button></div>`);
     $('#goAj').onclick = openSettings;
