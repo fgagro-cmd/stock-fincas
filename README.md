@@ -26,6 +26,8 @@ Pestaña «Exportar»: eliges finca (o todas) y mes y descarga o comparte un Exc
 ## Histórico del Excel
 Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se cargan una vez desde Ajustes → «Cargar histórico del Excel» con el fichero de Drive › Apps › Copia de seguridad (`gestion-fincas-historico-excel.json`). Entran como registros «histórico»: no mueven el stock, se pueden corregir y salen en la Tabla principal y en la pestaña Actividad. Cargarlo otra vez solo añade lo que falte. Todos los tipos van con tilde (Fumigación, Subvención, Estiércol, Enmienda orgánica).
 
+Desde la v2.4.0 hay un tipo de gasto «Seguro». Al abrir la versión nueva, los gastos «Seguro Chelo» y «Seguro Francis» pasan solos de «Otros» a «Seguro» (también al cargar el histórico o restaurar una copia antigua).
+
 ## Copia automática en Google Sheets
 1. Crea una hoja de Google nueva (por ejemplo «Stock Fincas»).
 2. Extensiones → Apps Script. Borra lo que haya, pega el contenido de `google-sheets/Codigo.gs` y cambia `CAMBIA-ESTA-CLAVE` por una clave larga propia. Guarda.

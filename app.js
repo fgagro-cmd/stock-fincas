@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.3.0';
+const APP_VERSION = '2.4.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -11,7 +11,7 @@ const CAT_STOCK = ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimula
 const CATEGORIAS = ['Ingreso', 'Gasto', 'Tarea'];
 const TIPOS = {
   Ingreso: ['Cosecha', 'Subvención', 'Otros ingresos'],
-  Gasto: ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimulantes', 'Combustible', 'Material de riego', 'Agua de riego', 'Enmienda orgánica', 'Arrendamiento', 'Otros'],
+  Gasto: ['Fertilizantes', 'Fitosanitarios', 'Herbicidas', 'Bioestimulantes', 'Combustible', 'Material de riego', 'Agua de riego', 'Seguro', 'Enmienda orgánica', 'Arrendamiento', 'Otros'],
   Tarea: ['Fumigación', 'Labrar', 'Desbrozar', 'Poda', 'Herbicida', 'Mantenimiento', 'Mejoras', 'Estiércol', 'Recolección', 'Otras tareas'],
 };
 const TIPO2 = ['Con maquinaria', 'Sin maquinaria', 'Contratado'];
@@ -89,11 +89,14 @@ function persist() {
   return saveChain;
 }
 function emptyState() {
-  return { v: 3, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [] };
+  return { v: 4, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [] };
 }
 /* v1 → v2: lista de fincas en los datos, enlace con maestros y cola de altas. No cambia ningún registro.
-   v2 → v3: tipos con tilde (Fumigacion → Fumigación, etc.). Solo cambia el texto del tipo. */
+   v2 → v3: tipos con tilde (Fumigacion → Fumigación, etc.). Solo cambia el texto del tipo.
+   v3 → v4: nuevo tipo de gasto «Seguro»; los gastos «Seguro Chelo» y «Seguro Francis» pasan de «Otros» a «Seguro». */
 const TIPO_TILDE = { Fumigacion: 'Fumigación', Subvencion: 'Subvención', Estiercol: 'Estiércol', 'Enmienda organica': 'Enmienda orgánica' };
+const ES_SEGURO = /^\s*seguro\s+(chelo|francis)\s*$/i;
+const tipoSeguro = (categoria, tipo, desc) => (categoria === 'Gasto' && tipo === 'Otros' && ES_SEGURO.test(desc || '') ? 'Seguro' : tipo);
 function migrar(s) {
   if (!Array.isArray(s.fincas)) s.fincas = structuredClone(FINCAS_BASE);
   if (!Array.isArray(s.mxPend)) s.mxPend = [];
@@ -103,7 +106,8 @@ function migrar(s) {
       if (nuevo) { if (m.desc === m.tipo) m.desc = nuevo; m.tipo = nuevo; }
     }
   }
-  s.v = 3;
+  if (!s.v || s.v < 4) for (const m of s.movs || []) m.tipo = tipoSeguro(m.categoria, m.tipo, m.desc);
+  s.v = 4;
   return s;
 }
 const appVacia = () => !state.productos.length && !state.movs.length && !state.entradas.length;
@@ -1319,7 +1323,7 @@ function lineasHistorico(j) {
     if (ya.has(l.id)) { yaN++; continue; }
     const fi = porMid.get(l.fincaId) || porNombre.get(String(l.finca).toLowerCase());
     if (!fi) { faltan.add(l.finca); continue; }
-    const tipo = TIPO_TILDE[l.tipo] || l.tipo;
+    const tipo = tipoSeguro(l.categoria, TIPO_TILDE[l.tipo] || l.tipo, l.desc);
     if (!TIPOS[l.categoria] || !TIPOS[l.categoria].includes(tipo)) throw new Error(`Tipo desconocido en el histórico: ${l.categoria} · ${l.tipo}`);
     nuevas.push({ id: l.id, ts: Number(l.ts) || 0, hist: true, campana: Number(l.campana), fecha: l.fecha, categoria: l.categoria, tipo, tipo2: l.categoria === 'Tarea' ? (l.tipo2 || '') : '', finca: fi.code, desc: l.desc || tipo, producto: null, cantidad: Number(l.cantidad) || 0, precio: Number(l.precio) || 0, importe: Number(l.importe) || 0 });
   }
@@ -1378,7 +1382,11 @@ async function init() {
   try {
     let s = await dbGet('state');
     if (!s) { s = emptyState(); await dbSet('state', s); }
-    else if (!s.v || s.v < 3) { migrar(s); await dbSet('state', s); }
+    else if (!s.v || s.v < 4) {
+      const antes = JSON.stringify(s.movs || []);
+      migrar(s); await dbSet('state', s);
+      if (JSON.stringify(s.movs) !== antes && syncOn()) { sync.dirty = true; saveSync(); } // que la Tabla principal recoja el cambio
+    }
     state = migrar(s);
   } catch (e) {
     state = emptyState();
