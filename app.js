@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.4.0';
+const APP_VERSION = '2.5.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -143,7 +143,7 @@ function commit(mutator) {
 const isStockMode = (categoria, tipo) => categoria === 'Gasto' && CAT_STOCK.includes(tipo);
 
 /* ---------- UI: estado de pantalla ---------- */
-const ui = { tab: 'salidas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), expFinca: '', expMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
+const ui = { tab: 'salidas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
 
 let toastTimer;
 function toast(msg, err = false) {
@@ -556,21 +556,50 @@ function openExportSheet() {
   draw();
 }
 
-/* ---------- Pantalla: Exportar (Excel de contabilidad de una finca y un mes) ----------
-   Columnas del Excel de contabilidad: Importe = precio por unidad; Total = lo que suma la línea.
-   Las líneas con solo total (cantidad 0) dejan Cantidad e Importe vacíos. */
+/* ---------- Pantalla: Buscar (todos los registros, del histórico del Excel a hoy) ----------
+   Texto libre + filtros de campaña, mes, finca, categoría y tipo. Se puede abrir y corregir cada registro.
+   Lo encontrado se descarga como Excel de contabilidad (lo que antes hacía la pestaña Exportar):
+   Importe = precio por unidad; Total = lo que suma la línea. Las líneas con solo total (cantidad 0)
+   dejan Cantidad e Importe vacíos. */
 const CONTA_HEADER = ['Fecha', 'Descripción', 'Categoría', 'Tipo 1', 'Tipo 2', 'Finca', 'Cantidad', 'Importe', 'Total'];
 const CONTA_TIPOS = ['fecha', 'texto', 'texto', 'texto', 'texto', 'texto', 'numero', 'euros', 'euros'];
 const CONTA_ANCHOS = [11, 34, 11, 18, 15, 22, 11, 12, 13];
+const BUS_PAGINA = 150;
+const BUS_VACIO = { q: '', camp: 'todas', mes: 'todos', finca: 'todas', cat: 'Todas', tipo: 'todos' };
+ui.bus = { ...BUS_VACIO };
+ui.busN = BUS_PAGINA;
+
 function fincasExport() {
   const usadas = new Set(state.movs.map((s) => s.finca));
   return state.fincas.filter((f) => f.activa !== false || usadas.has(f.code));
 }
 const nombreFinca = (code) => (code === 'todas' ? 'Todas las fincas' : fincaByCode(code)?.name ?? code);
-function movsExport(finca, mes) {
-  return state.movs.filter((s) => (finca === 'todas' || s.finca === finca) && monthOf(s.fecha) === mes)
-    .sort((a, b) => a.fecha.localeCompare(b.fecha) || a.ts - b.ts);
+const sinTildes = (s) => String(s ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+const dayLabelAnio = (iso) => new Date(iso + 'T00:00:00').toLocaleDateString('es-ES', { weekday: 'short', day: 'numeric', month: 'short', year: 'numeric' });
+
+// Texto en el que se busca cada registro (se guarda mientras el registro no cambie)
+const busTxt = new WeakMap();
+function textoRegistro(s) {
+  let t = busTxt.get(s);
+  if (t == null) {
+    t = sinTildes([s.desc, s.categoria, s.tipo, s.tipo2, s.finca, nombreFinca(s.finca), fmtDate(s.fecha), s.campana,
+      nf(s.importe), numEs(s.importe, 2), s.cantidad ? numEs(s.cantidad, 4) : '', s.hist ? 'historico' : ''].join(' | '));
+    busTxt.set(s, t);
+  }
+  return t;
 }
+function filtrarBusqueda(b, { sinMes = false } = {}) {
+  const palabras = sinTildes(b.q).split(/\s+/).filter(Boolean);
+  return state.movs.filter((s) =>
+    (b.camp === 'todas' || String(s.campana) === b.camp)
+    && (sinMes || b.mes === 'todos' || monthOf(s.fecha) === b.mes)
+    && (b.finca === 'todas' || s.finca === b.finca)
+    && (b.cat === 'Todas' || s.categoria === b.cat)
+    && (b.tipo === 'todos' || s.tipo === b.tipo)
+    && (!palabras.length || palabras.every((p) => textoRegistro(s).includes(p))));
+}
+const busActivo = () => Object.keys(BUS_VACIO).some((k) => ui.bus[k] !== BUS_VACIO[k]);
+
 function filasConta(list) {
   return list.map((s) => {
     const soloTotal = !s.cantidad;
@@ -578,58 +607,111 @@ function filasConta(list) {
       soloTotal ? '' : round(s.cantidad, 4), soloTotal ? '' : round(s.precio, 6), round(s.importe, 2)];
   });
 }
-function excelConta(finca, mes) {
-  const list = movsExport(finca, mes);
+function excelBusqueda() {
+  const b = ui.bus;
+  const list = filtrarBusqueda(b).sort((x, y) => x.fecha.localeCompare(y.fecha) || x.ts - y.ts);
   const blob = XLSX_MIN.libro({ nombre: 'Contabilidad', cabecera: CONTA_HEADER, tipos: CONTA_TIPOS, anchos: CONTA_ANCHOS, filas: filasConta(list) });
+  const partes = ['Contabilidad', nombreFinca(b.finca)];
+  if (b.mes !== 'todos') partes.push(b.mes); else if (b.camp !== 'todas') partes.push('Campana ' + b.camp); else partes.push('todo');
+  if (b.tipo !== 'todos') partes.push(b.tipo); else if (b.cat !== 'Todas') partes.push(b.cat);
+  if (b.q.trim()) partes.push(b.q.trim().slice(0, 30));
   // Nombre sin tildes ni «ñ»: algunos navegadores descartan el nombre si las lleva y guardan «download»
-  const name = `Contabilidad ${nombreFinca(finca)} ${mes}.xlsx`.normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w .-]/g, ' ').replace(/\s+/g, ' ');
+  const name = (partes.join(' ') + '.xlsx').normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/[^\w .-]/g, ' ').replace(/\s+/g, ' ');
   return { blob, name, n: list.length };
 }
-function renderExportar() {
+
+function opcionesTipo(cat) {
+  const enDatos = (c) => [...new Set(state.movs.filter((s) => s.categoria === c).map((s) => s.tipo))].filter((t) => !TIPOS[c]?.includes(t)).sort((a, b) => a.localeCompare(b, 'es'));
+  const opt = (t) => `<option value="${esc(t)}" ${ui.bus.tipo === t ? 'selected' : ''}>${esc(t)}</option>`;
+  const cats = cat === 'Todas' ? CATEGORIAS : [cat];
+  return `<option value="todos">Todos los tipos</option>` + cats.map((c) => {
+    const lista = [...(TIPOS[c] || []), ...enDatos(c)].map(opt).join('');
+    return cats.length > 1 ? `<optgroup label="${c}s">${lista}</optgroup>` : lista;
+  }).join('');
+}
+
+function renderBuscar() {
+  const b = ui.bus;
   const fincas = fincasExport();
-  if (!ui.expFinca || (ui.expFinca !== 'todas' && !fincas.some((f) => f.code === ui.expFinca))) ui.expFinca = fincas[0]?.code || 'todas';
-  const deLaFinca = state.movs.filter((s) => ui.expFinca === 'todas' || s.finca === ui.expFinca);
-  const porMes = new Map(); for (const s of deLaFinca) { const k = monthOf(s.fecha); porMes.set(k, (porMes.get(k) || 0) + 1); }
-  const meses = [...new Set([monthOf(todayISO()), ui.expMes, ...porMes.keys()])].sort().reverse();
-  const items = movsExport(ui.expFinca, ui.expMes);
-  const sum = (cat) => items.filter((s) => s.categoria === cat).reduce((t, s) => t + s.importe, 0);
+  if (b.finca !== 'todas' && !fincas.some((f) => f.code === b.finca)) b.finca = 'todas';
+  if (b.tipo !== 'todos' && b.cat !== 'Todas' && !(TIPOS[b.cat] || []).includes(b.tipo) && !state.movs.some((s) => s.categoria === b.cat && s.tipo === b.tipo)) b.tipo = 'todos';
+  const porCamp = new Map(); for (const s of state.movs) { const k = String(s.campana); porCamp.set(k, (porCamp.get(k) || 0) + 1); }
+  const camps = [...porCamp.keys()].sort((x, y) => y.localeCompare(x, 'es', { numeric: true }));
+  if (b.camp !== 'todas' && !porCamp.has(b.camp)) b.camp = 'todas';
+  const porMes = new Map(); for (const s of state.movs) if (b.camp === 'todas' || String(s.campana) === b.camp) { const k = monthOf(s.fecha); porMes.set(k, (porMes.get(k) || 0) + 1); }
+  if (b.mes !== 'todos' && !porMes.has(b.mes)) b.mes = 'todos';
+  const meses = [...porMes.keys()].sort().reverse();
+  $('#view').innerHTML = `
+    <input type="search" id="bQ" value="${esc(b.q)}" placeholder="Buscar: producto, descripción, importe…" aria-label="Buscar" autocomplete="off" enterkeyhint="search">
+    <div class="grid2 filtros">
+      <label class="fld"><span>Campaña</span><select id="bC"><option value="todas">Todas</option>${camps.map((c) => `<option value="${esc(c)}" ${b.camp === c ? 'selected' : ''}>${esc(c)} · ${porCamp.get(c)}</option>`).join('')}</select></label>
+      <label class="fld"><span>Mes</span><select id="bM"><option value="todos">Todos</option>${meses.map((m) => `<option value="${m}" ${b.mes === m ? 'selected' : ''}>${monthLabel(m)} · ${porMes.get(m)}</option>`).join('')}</select></label>
+      <label class="fld"><span>Finca</span><select id="bF"><option value="todas">Todas</option>${fincas.map((f) => `<option value="${f.code}" ${b.finca === f.code ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}</select></label>
+      <label class="fld"><span>Tipo</span><select id="bT">${opcionesTipo(b.cat)}</select></label>
+    </div>
+    <div class="chips" id="bCat">${['Todas', ...CATEGORIAS].map((c) => `<button class="chip" data-cat="${c}" aria-pressed="${b.cat === c}">${c === 'Todas' ? 'Todas' : c + 's'}</button>`).join('')}</div>
+    <div id="bRes"></div>`;
+  const cambio = (k) => (e) => { b[k] = e.target.value; ui.busN = BUS_PAGINA; renderBuscar(); };
+  $('#bC').onchange = cambio('camp');
+  $('#bM').onchange = cambio('mes');
+  $('#bF').onchange = cambio('finca');
+  $('#bT').onchange = cambio('tipo');
+  $('#bCat').onclick = (e) => {
+    const x = e.target.closest('[data-cat]'); if (!x || b.cat === x.dataset.cat) return;
+    b.cat = x.dataset.cat; ui.busN = BUS_PAGINA; renderBuscar();
+  };
+  let t;
+  const q = $('#bQ');
+  q.oninput = () => { b.q = q.value; ui.busN = BUS_PAGINA; clearTimeout(t); t = setTimeout(drawResultados, 180); };
+  q.onkeydown = (e) => { if (e.key === 'Enter') { clearTimeout(t); drawResultados(); q.blur(); } };
+  drawResultados();
+}
+
+function drawResultados() {
+  const box = $('#bRes'); if (!box) return;
+  const b = ui.bus;
+  const items = filtrarBusqueda(b).sort((x, y) => y.fecha.localeCompare(x.fecha) || y.ts - x.ts);
+  const sum = (cat) => items.filter((s) => s.categoria === cat).reduce((acc, s) => acc + s.importe, 0);
+  const conCant = b.tipo !== 'todos' && items.some((s) => s.cantidad);
+  const cant = conCant ? items.reduce((acc, s) => acc + (s.cantidad || 0), 0) : 0;
+  const vista = items.slice(0, ui.busN);
   let lastDay = '';
-  const rows = [...items].reverse().map((s) => {
-    const head = s.fecha !== lastDay ? `<li class="day">${dayLabel(s.fecha)}</li>` : ''; lastDay = s.fecha;
+  const rows = vista.map((s) => {
+    const head = s.fecha !== lastDay ? `<li class="day">${dayLabelAnio(s.fecha)}</li>` : ''; lastDay = s.fecha;
     const pill = s.categoria === 'Ingreso' ? 'in' : s.categoria === 'Tarea' ? 'task' : '';
     return `${head}<li><button class="row" data-id="${s.id}">
-      <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''}${ui.expFinca === 'todas' ? ' · ' + esc(s.finca) : ''}</div></div>
-      <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${s.cantidad ? `${qty(s.cantidad)} × ${eur(s.precio)}` : 'solo total'}</div></div>
+      <div class="main"><div class="name">${esc(s.desc)}</div><div class="sub"><span class="pill ${pill}">${s.categoria}</span>${esc(s.tipo)}${s.tipo2 ? ' · ' + esc(s.tipo2) : ''} · ${esc(nombreFinca(s.finca))} · camp. ${esc(s.campana)}${s.hist ? ' · histórico' : ''}</div></div>
+      <div class="side"><div class="big">${eur(s.importe)}</div><div class="sub">${s.cantidad ? (s.importe ? `${qty(s.cantidad)} × ${eur(s.precio)}` : `${qty(s.cantidad)} · sin importe`) : 'solo total'}</div></div>
     </button></li>`;
   }).join('');
   const puedeCompartir = !!(navigator.canShare && window.File);
-  $('#view').innerHTML = `
-    <div class="fld" style="margin-bottom:10px"><span>Finca</span><select id="xpF" aria-label="Finca">${fincas.map((f) => `<option value="${f.code}" ${f.code === ui.expFinca ? 'selected' : ''}>${esc(f.name)}</option>`).join('')}<option value="todas" ${ui.expFinca === 'todas' ? 'selected' : ''}>Todas las fincas</option></select></div>
-    <div class="fld" style="margin-bottom:10px"><span>Mes</span><select id="xpM" aria-label="Mes">${meses.map((mm) => `<option value="${mm}" ${mm === ui.expMes ? 'selected' : ''}>${monthLabel(mm)}${porMes.get(mm) ? ` · ${porMes.get(mm)} ${porMes.get(mm) === 1 ? 'registro' : 'registros'}` : ' · sin registros'}</option>`).join('')}</select></div>
-    <div class="summary"><span><b>${items.length}</b> ${items.length === 1 ? 'registro' : 'registros'}</span><span>Gastos <b>${eur(sum('Gasto'))}</b></span><span>Tareas <b>${eur(sum('Tarea'))}</b></span><span>Ingresos <b>${eur(sum('Ingreso'))}</b></span></div>
-    <div class="actions ${puedeCompartir ? 'two' : ''}" style="margin:12px 0">
-      <button class="btn primary" id="xpD" ${items.length ? '' : 'disabled'}>Descargar Excel</button>
-      ${puedeCompartir ? `<button class="btn" id="xpS" ${items.length ? '' : 'disabled'}>Compartir</button>` : ''}
+  box.innerHTML = `
+    <div class="summary"><span><b>${nf(items.length, 0, 0)}</b> ${items.length === 1 ? 'registro' : 'registros'}</span><span>Gastos <b>${eur(sum('Gasto'))}</b></span><span>Tareas <b>${eur(sum('Tarea'))}</b></span><span>Ingresos <b>${eur(sum('Ingreso'))}</b></span>${conCant ? `<span>Cantidad <b>${qty(cant)}</b></span>` : ''}</div>
+    <div class="actions ${puedeCompartir ? 'three' : 'two'}" style="margin:0 0 12px">
+      <button class="btn" id="bL" ${busActivo() ? '' : 'disabled'}>Limpiar</button>
+      <button class="btn primary" id="bD" ${items.length ? '' : 'disabled'}>Excel</button>
+      ${puedeCompartir ? `<button class="btn" id="bS" ${items.length ? '' : 'disabled'}>Compartir</button>` : ''}
     </div>
-    <p class="hint" style="margin-top:0">Columnas: Fecha, Descripción, Categoría, Tipo 1, Tipo 2, Finca, Cantidad, Importe (precio por unidad) y Total. Las líneas con solo total dejan vacíos Cantidad e Importe.</p>
-    ${items.length ? `<ul class="list">${rows}</ul>` : '<div class="empty">No hay registros de esta finca en este mes.</div>'}`;
-  $('#xpF').onchange = (e) => { ui.expFinca = e.target.value; renderExportar(); };
-  $('#xpM').onchange = (e) => { ui.expMes = e.target.value; renderExportar(); };
-  $('#xpD').onclick = () => {
-    const x = excelConta(ui.expFinca, ui.expMes);
+    ${items.length ? `<ul class="list">${rows}</ul>` : `<div class="empty">${state.movs.length ? 'Ningún registro coincide con la búsqueda.' : 'Todavía no hay registros.'}</div>`}
+    ${items.length > vista.length ? `<div class="actions" style="margin-top:12px"><button class="btn" id="bMas">Ver ${nf(Math.min(BUS_PAGINA, items.length - vista.length), 0, 0)} más (quedan ${nf(items.length - vista.length, 0, 0)})</button></div>` : ''}
+    ${items.length ? '<p class="hint" style="margin-top:12px">El Excel lleva todo lo encontrado, del más antiguo al más reciente: Fecha, Descripción, Categoría, Tipo 1, Tipo 2, Finca, Cantidad, Importe (precio por unidad) y Total.</p>' : ''}`;
+  $('#bL', box).onclick = () => { ui.bus = { ...BUS_VACIO }; ui.busN = BUS_PAGINA; renderBuscar(); };
+  $('#bD', box).onclick = () => {
+    const x = excelBusqueda();
     const url = URL.createObjectURL(x.blob);
     const a = document.createElement('a'); a.href = url; a.download = x.name; document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 4000);
     toast(`Excel descargado · ${x.n} registros`);
   };
-  const sh = $('#xpS');
+  const sh = $('#bS', box);
   if (sh) sh.onclick = async () => {
-    const x = excelConta(ui.expFinca, ui.expMes);
+    const x = excelBusqueda();
     const file = new File([x.blob], x.name, { type: x.blob.type });
-    if (!navigator.canShare({ files: [file] })) return toast('Este móvil no deja compartir Excel: usa «Descargar Excel»', true);
-    try { await navigator.share({ files: [file], title: x.name }); } catch (e) { if (!e || e.name !== 'AbortError') toast('No se pudo compartir: usa «Descargar Excel»', true); }
+    if (!navigator.canShare({ files: [file] })) return toast('Este móvil no deja compartir Excel: usa «Excel»', true);
+    try { await navigator.share({ files: [file], title: x.name }); } catch (e) { if (!e || e.name !== 'AbortError') toast('No se pudo compartir: usa «Excel»', true); }
   };
-  const ul = $('#view .list'); if (ul) ul.onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) openMovForm(state.movs.find((x) => x.id === b.dataset.id)); };
+  const mas = $('#bMas', box); if (mas) mas.onclick = () => { ui.busN += BUS_PAGINA; drawResultados(); };
+  const ul = $('.list', box); if (ul) ul.onclick = (e) => { const x = e.target.closest('[data-id]'); if (x) openMovForm(state.movs.find((m) => m.id === x.dataset.id)); };
 }
 
 /* ---------- Copia automática en Google Sheets ----------
@@ -1356,8 +1438,8 @@ function renderAll() {
   document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   renderSyncStatus(); renderMxStatus();
   $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nuevo registro';
-  $('#fab').style.display = ui.tab === 'exportar' ? 'none' : '';
-  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else if (ui.tab === 'exportar') renderExportar(); else renderSalidas();
+  $('#fab').style.display = ui.tab === 'buscar' ? 'none' : '';
+  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else if (ui.tab === 'buscar') renderBuscar(); else renderSalidas();
   if (appVacia()) {
     $('#view').insertAdjacentHTML('afterbegin', `<div class="notice"><b>Este móvil todavía no tiene datos</b><p class="small">La app ya no lleva el stock dentro. Restáuralo una vez desde Ajustes: «Copia automática en Google Sheets» → «Restaurar desde la hoja», o «Restaurar desde fichero» con la copia guardada en Drive (Apps › Copia de seguridad).</p><button class="btn primary" id="goAj">Abrir Ajustes</button></div>`);
     $('#goAj').onclick = openSettings;

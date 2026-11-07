@@ -20,8 +20,10 @@ Settings → Pages → rama `main`, carpeta `/ (root)`. Después abrir la direcc
 ## Actividad
 Cada registro es un gasto, una tarea o un ingreso. Los gastos de productos con stock necesitan producto y cantidad. El resto admite solo el total (por ejemplo, la liquidación de una cosecha, con cantidad 0) o solo la cantidad (por ejemplo, los kilos recogidos, con importe 0), y cantidades negativas para descuentos o ajustes.
 
-## Exportar (Excel de contabilidad)
-Pestaña «Exportar»: eliges finca (o todas) y mes y descarga o comparte un Excel con las columnas Fecha, Descripción, Categoría, Tipo 1, Tipo 2, Finca, Cantidad, Importe (precio por unidad) y Total. Las líneas con solo total dejan vacíos Cantidad e Importe. El Excel se genera en el móvil (`xlsx.js`, sin librerías externas), así que funciona sin conexión.
+## Buscar (y Excel de contabilidad)
+Pestaña «Buscar» (desde la v2.5.0; sustituye a «Exportar»): busca en todos los registros, del histórico del Excel a hoy. Casilla de texto (descripción, producto, tipo, finca, fecha, campaña o importe; sin tildes ni mayúsculas; tienen que aparecer todas las palabras) y filtros de campaña, mes, finca, tipo y categoría. Cada registro se abre y se corrige como en Actividad. Muestra cuántos hay y la suma de gastos, tareas e ingresos (y la cantidad si filtras por un tipo).
+
+«Excel» y «Compartir» sacan todo lo encontrado con las columnas Fecha, Descripción, Categoría, Tipo 1, Tipo 2, Finca, Cantidad, Importe (precio por unidad) y Total. Para el Excel de una finca y un mes, elige esa finca y ese mes. Las líneas con solo total dejan vacíos Cantidad e Importe. El Excel se genera en el móvil (`xlsx.js`, sin librerías externas), así que funciona sin conexión.
 
 ## Histórico del Excel
 Las 1.464 líneas del Excel Gestion_de_fincas_3.0 (sept. 2021 – sept. 2026) se cargan una vez desde Ajustes → «Cargar histórico del Excel» con el fichero de Drive › Apps › Copia de seguridad (`gestion-fincas-historico-excel.json`). Entran como registros «histórico»: no mueven el stock, se pueden corregir y salen en la Tabla principal y en la pestaña Actividad. Cargarlo otra vez solo añade lo que falte. Todos los tipos van con tilde (Fumigación, Subvención, Estiércol, Enmienda orgánica).
