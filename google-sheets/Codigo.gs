@@ -6,6 +6,8 @@
  *                      la más reciente arriba. Para tu Excel: copia las columnas A–J y pégalas en su tabla.
  *   Entradas        -> compras y correcciones de inventario
  *   Stock           -> stock, precio medio y valor por producto
+ *   Tareas          -> tareas pendientes de Organización (desde la 2.9.1), para la Vista única
+ *   Tareas hechas   -> tareas terminadas: semana prevista, día real, en plazo y horas reales
  *   _copia          -> copia completa para poder restaurar la app (oculta; no tocar)
  *
  * Pestañas que escribe la app Cuentas fincas (sí puedes mirarlas; mejor cambiarlas desde la app):
@@ -98,6 +100,16 @@ function sincronizar(req) {
   escribirTabla(HOJAS.tabla, CAB_TABLA, tabla, ['dd/mm/yyyy', null, '0', null, null, null, null, '#,##0.###', '#,##0.00####', '#,##0.00', null, '0']);
   escribirTabla(HOJAS.entradas, CAB_ENTRADAS, entradas, ['dd/mm/yyyy', null, null, '#,##0.###', '#,##0.00####', '#,##0.00']);
   escribirTabla(HOJAS.stock, CAB_STOCK, stock, [null, null, '#,##0.###', '#,##0.00####', '#,##0.00']);
+  if (Array.isArray(req.tareasTabla)) {
+    escribirTabla('Tareas', ['Semana (domingo)', 'Tipo', 'Quién', 'Prioridad', 'Tarea', 'Finca', 'Horas previstas', 'Estado', '% avance', 'Apuntada', 'ID tarea'],
+      req.tareasTabla.map(function (r) { const x = r.slice(); if (x[0]) x[0] = aFecha(x[0]); if (x[9]) x[9] = aFecha(x[9]); return x; }),
+      ['dd/mm/yyyy', null, null, null, null, null, '#,##0.0', null, '0', 'dd/mm/yyyy', null]);
+  }
+  if (Array.isArray(req.hechasTabla)) {
+    escribirTabla('Tareas hechas', ['Hecha', 'Semana prevista (domingo)', 'En plazo', 'Tipo', 'Quién', 'Prioridad', 'Tarea', 'Finca', 'Horas previstas', 'Horas reales', 'Apuntada', 'ID tarea'],
+      req.hechasTabla.map(function (r) { const x = r.slice(); [0, 1, 10].forEach(function (i) { if (x[i]) x[i] = aFecha(x[i]); }); return x; }),
+      ['dd/mm/yyyy', 'dd/mm/yyyy', null, null, null, null, null, null, '#,##0.0', '#,##0.0', 'dd/mm/yyyy', null]);
+  }
   guardarCopia(String(req.estado || ''), new Date().toISOString());
 
   // La pestaña «Salidas» era el espejo antiguo: la sustituye «Tabla principal».

@@ -78,3 +78,7 @@ La app Cuentas fincas usa esta misma hoja (misma dirección y clave): lee la Tab
 
 ## Actualizaciones
 Al cambiar cualquier fichero, sube `VERSION` en `sw.js` para que los móviles recojan la nueva versión. Los datos del móvil se guardan con el nombre interno `stock-fincas`: no cambiarlo o se perderían.
+
+
+## Tareas para la Vista única (2.9.0–2.9.1)
+Al terminar una tarea de Organización queda un registro (semana prevista, día real y horas reales). La app manda a la hoja las pestañas **«Tareas»** (pendientes) y **«Tareas hechas»** para que la Vista única muestre las tareas de la semana y cómo se cumplen. Necesita el `Codigo.gs` nuevo (pegar, guardar y publicar una nueva versión de la implementación, como siempre).

@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.9.0';
+const APP_VERSION = '2.9.1';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -923,6 +923,10 @@ function syncPayload() {
     .map((x) => [x.p.nombre, x.p.categoria, x.q, x.avg != null ? round(x.avg, 4) : '', x.q > EPS ? round(x.v, 2) : 0]);
   const tabla = [...state.movs].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe, MESES[Number(s.fecha.slice(5, 7)) - 1], Number(s.fecha.slice(0, 4))]);
   const out = { tabla, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+  // Organización para la Vista única: pendientes y hechas (desde 2.9.1; el script las escribe en «Tareas» y «Tareas hechas»)
+  const nomF = (c) => fincaByCode(c)?.name ?? c;
+  out.tareasTabla = [...state.tareas].sort((a, b) => (a.limite || '9999').localeCompare(b.limite || '9999')).map((t) => [t.limite || '', t.tipo, t.tipo2 || '', t.prioridad, t.titulo, nomF(t.finca), t.horas || 0, t.estado, t.estado === 'Empezada' ? (t.pct || 0) : 0, t.ts ? new Date(t.ts).toISOString().slice(0, 10) : '', t.id]);
+  out.hechasTabla = [...(state.hechas || [])].sort((a, b) => b.hecha.localeCompare(a.hecha)).map((h) => [h.hecha, h.limite || '', h.limite ? (h.hecha <= h.limite ? 'Sí' : 'No') : '', h.tipo, h.tipo2 || '', h.prioridad, h.titulo, nomF(h.finca), h.horas || 0, h.horasReales || 0, h.creada || '', h.id]);
   // Tareas de Organización para el calendario «Fincas» de Google (solo si está activado)
   if (sync.cal) out.tareas = state.tareas.map((t) => ({ id: t.id, titulo: t.titulo, tipo: t.tipo, quien: t.tipo2 || '', finca: fincaByCode(t.finca)?.name ?? t.finca, prioridad: t.prioridad, limite: t.limite || '', horas: t.horas || 0, estado: t.estado, pct: t.pct || 0, nota: t.nota || '' }));
   return out;
