@@ -20,6 +20,12 @@ Settings → Pages → rama `main`, carpeta `/ (root)`. Después abrir la direcc
 ## Actividad
 Cada registro es un gasto, una tarea o un ingreso. Los gastos de productos con stock necesitan producto y cantidad. El resto admite solo el total (por ejemplo, la liquidación de una cosecha, con cantidad 0) o solo la cantidad (por ejemplo, los kilos recogidos, con importe 0), y cantidades negativas para descuentos o ajustes.
 
+## Organización (tareas pendientes)
+Pestaña «Organización» (desde la v2.6.0): lo que hay que hacer en las fincas en las próximas semanas. Cada tarea lleva: tarea, tipo (los de Tarea de Actividad), quién la hace (con maquinaria, sin maquinaria o contratado), finca, prioridad (Alta, Media, Baja), fecha límite, horas previstas, estado (Pendiente o Empezada con su %) y nota.
+- Lista ordenada: primero las vencidas (en rojo), luego por prioridad y fecha límite. Filtros por finca y prioridad. Arriba: nº de tareas, vencidas, empezadas y horas por delante (horas previstas menos lo ya avanzado).
+- Al terminarla: ábrela → «Terminada → pasar a Actividad». Se abre el registro de Actividad ya relleno (hoy, finca, tipo, quién, descripción, horas previstas y el precio por hora del último registro igual); se corrigen las horas reales y se guarda. Solo entonces la tarea desaparece de Organización. Si cierras sin guardar, sigue pendiente.
+- Las tareas no cuentan en las cuentas ni en el stock. Viajan con los datos (copia en fichero y pestaña _copia de la hoja), pero no tienen pestaña propia en la hoja.
+
 ## Buscar (y Excel de contabilidad)
 Pestaña «Buscar» (desde la v2.5.0; sustituye a «Exportar»): busca en todos los registros, del histórico del Excel a hoy. Casilla de texto (descripción, producto, tipo, finca, fecha, campaña o importe; sin tildes ni mayúsculas; tienen que aparecer todas las palabras) y filtros de campaña, mes, finca, tipo y categoría. Cada registro se abre y se corrige como en Actividad. Muestra cuántos hay y la suma de gastos, tareas e ingresos (y la cantidad si filtras por un tipo).
 

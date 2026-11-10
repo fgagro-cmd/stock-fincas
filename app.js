@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.5.0';
+const APP_VERSION = '2.6.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -15,6 +15,8 @@ const TIPOS = {
   Tarea: ['Fumigación', 'Labrar', 'Desbrozar', 'Poda', 'Herbicida', 'Mantenimiento', 'Mejoras', 'Estiércol', 'Recolección', 'Otras tareas'],
 };
 const TIPO2 = ['Con maquinaria', 'Sin maquinaria', 'Contratado'];
+const PRIORIDADES = ['Alta', 'Media', 'Baja'];
+const ESTADOS_TAREA = ['Pendiente', 'Empezada'];
 // Fincas de partida (los códigos con los que se guardaban los registros). Desde la v2 la lista vive en
 // los datos (state.fincas) y se enlaza con el maestro de fincas; esta lista solo sirve para migrar.
 const FINCAS_BASE = [
@@ -89,11 +91,12 @@ function persist() {
   return saveChain;
 }
 function emptyState() {
-  return { v: 4, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [] };
+  return { v: 5, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [], tareas: [] };
 }
 /* v1 → v2: lista de fincas en los datos, enlace con maestros y cola de altas. No cambia ningún registro.
    v2 → v3: tipos con tilde (Fumigacion → Fumigación, etc.). Solo cambia el texto del tipo.
-   v3 → v4: nuevo tipo de gasto «Seguro»; los gastos «Seguro Chelo» y «Seguro Francis» pasan de «Otros» a «Seguro». */
+   v3 → v4: nuevo tipo de gasto «Seguro»; los gastos «Seguro Chelo» y «Seguro Francis» pasan de «Otros» a «Seguro».
+   v4 → v5: lista de tareas pendientes de la pestaña Organización (state.tareas). No cambia ningún registro. */
 const TIPO_TILDE = { Fumigacion: 'Fumigación', Subvencion: 'Subvención', Estiercol: 'Estiércol', 'Enmienda organica': 'Enmienda orgánica' };
 const ES_SEGURO = /^\s*seguro\s+(chelo|francis)\s*$/i;
 const tipoSeguro = (categoria, tipo, desc) => (categoria === 'Gasto' && tipo === 'Otros' && ES_SEGURO.test(desc || '') ? 'Seguro' : tipo);
@@ -107,7 +110,8 @@ function migrar(s) {
     }
   }
   if (!s.v || s.v < 4) for (const m of s.movs || []) m.tipo = tipoSeguro(m.categoria, m.tipo, m.desc);
-  s.v = 4;
+  if (!Array.isArray(s.tareas)) s.tareas = [];
+  s.v = 5;
   return s;
 }
 const appVacia = () => !state.productos.length && !state.movs.length && !state.entradas.length;
@@ -143,7 +147,7 @@ function commit(mutator) {
 const isStockMode = (categoria, tipo) => categoria === 'Gasto' && CAT_STOCK.includes(tipo);
 
 /* ---------- UI: estado de pantalla ---------- */
-const ui = { tab: 'salidas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
+const ui = { tab: 'salidas', orgFinca: 'todas', orgPrio: 'Todas', stockCat: 'Todas', stockMode: 'con', stockQ: '', salMes: monthOf(todayISO()), salCat: 'Todas', entMes: monthOf(todayISO()), lastCat: 'Gasto', lastTipo: 'Fertilizantes' };
 
 let toastTimer;
 function toast(msg, err = false) {
@@ -417,13 +421,27 @@ function renderSalidas() {
   const ul = $('#view .list'); if (ul) ul.onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) openMovForm(state.movs.find((x) => x.id === b.dataset.id)); };
 }
 
-function openMovForm(orig) {
+/* opts.tarea: tarea de Organización que se termina. El formulario sale relleno con sus datos y, al guardar,
+   la tarea se quita de Organización en el mismo cambio (si no se guarda, la tarea sigue pendiente). */
+function openMovForm(orig, opts = {}) {
   const isNew = !orig;
+  const tarea = isNew && opts.tarea ? opts.tarea : null;
+  let pre = null;
+  if (tarea) {
+    const pr = ultimoPrecioTarea(tarea.tipo, tarea.tipo2);
+    const h = tarea.horas > 0 ? tarea.horas : null;
+    pre = { horas: h != null, precio: pr != null };
+  }
   const f = orig
     ? { fecha: orig.fecha, categoria: orig.categoria, tipo: orig.tipo, tipo2: orig.tipo2 || '', finca: orig.finca, desc: orig.producto ? '' : orig.desc, producto: orig.producto || '', cantidad: fmtIn(orig.cantidad), precio: fmtIn(orig.precio), importe: fmtIn(orig.importe, 4), edited: 'precio' }
-    : { fecha: todayISO(), categoria: ui.lastCat, tipo: ui.lastTipo, tipo2: '', finca: '', desc: '', producto: '', cantidad: '', precio: '', importe: '', edited: 'precio' };
+    : tarea
+      ? (() => {
+        const h = tarea.horas > 0 ? tarea.horas : null, p = ultimoPrecioTarea(tarea.tipo, tarea.tipo2);
+        return { fecha: todayISO(), categoria: 'Tarea', tipo: tarea.tipo, tipo2: tarea.tipo2 || '', finca: tarea.finca, desc: tarea.titulo, producto: '', cantidad: h != null ? fmtIn(h) : '', precio: p != null ? fmtIn(p) : '', importe: h != null && p != null ? fmtIn(h * p, 4) : '', edited: 'precio' };
+      })()
+      : { fecha: todayISO(), categoria: ui.lastCat, tipo: ui.lastTipo, tipo2: '', finca: '', desc: '', producto: '', cantidad: '', precio: '', importe: '', edited: 'precio' };
   const sinStock = !!(orig && orig.hist && !orig.producto); // línea del histórico del Excel: no mueve stock
-  const body = openSheet(isNew ? 'Nuevo registro' : 'Editar registro', '<div id="mf"></div>');
+  const body = openSheet(tarea ? 'Terminar tarea' : isNew ? 'Nuevo registro' : 'Editar registro', '<div id="mf"></div>');
   const box = $('#mf', body);
   const descs = [...new Set(state.movs.filter((s) => !s.producto).map((s) => s.desc))].sort((a, b) => a.localeCompare(b, 'es')).slice(0, 80);
 
@@ -434,6 +452,7 @@ function openMovForm(orig) {
     const sel = stockMode && f.producto ? m.get(f.producto) : null;
     const own = !isNew && orig.producto === f.producto ? orig.cantidad : 0; // lo que ya descuenta esta misma salida
     box.innerHTML = `
+      ${tarea ? `<div class="notice"><b>${esc(tarea.titulo)}</b><p class="small">Revisa la fecha, las horas reales${pre.horas ? ' (están puestas las previstas)' : ''} y el precio por hora${pre.precio ? ' (el del último registro igual)' : ''}. Al guardar pasa a Actividad y sale de Organización.</p></div>` : ''}
       ${sinStock ? '<p class="hint" style="margin-top:0">Línea del histórico del Excel: no mueve stock.</p>' : ''}
       <label class="fld"><span>Fecha</span><input id="mFe" type="date" value="${f.fecha}"></label>
       <div class="fld"><span>Categoría</span><div class="chips" data-k="categoria">${CATEGORIAS.map((c) => `<button type="button" class="chip" data-v="${c}" aria-pressed="${f.categoria === c}">${c}</button>`).join('')}</div></div>
@@ -448,10 +467,10 @@ function openMovForm(orig) {
       <div class="fld"><span>Finca</span><div class="grid2" data-k="finca">${state.fincas.filter((fi) => fi.activa !== false || fi.code === f.finca).map((fi) => `<button type="button" class="opt" data-v="${fi.code}" aria-pressed="${f.finca === fi.code}"><b>${fi.code}</b>${fi.name}</button>`).join('')}</div></div>
       ${amountsHTML(f)}
       ${stockMode ? '' : '<p class="hint">Puedes poner solo el total (por ejemplo, una liquidación) o solo la cantidad (por ejemplo, los kilos recogidos, con importe 0).</p>'}
-      <div class="actions two">
+      ${tarea ? '<div class="actions"><button class="btn primary" id="mSave">Guardar en Actividad</button></div>' : `<div class="actions two">
         ${isNew ? '<button class="btn" id="mSave2">Guardar y otra</button>' : '<button class="btn danger" id="mDel">Borrar</button>'}
         <button class="btn primary" id="mSave">Guardar</button>
-      </div>`;
+      </div>`}`;
     $('#mFe', box).onchange = (e) => { f.fecha = e.target.value; };
     const de = $('#mDe', box); if (de) de.oninput = (e) => { f.desc = e.target.value; };
     const pr = $('#mPr', box);
@@ -498,6 +517,7 @@ function openMovForm(orig) {
     const ok = commit((c) => {
       if (isNew) c.movs.push({ id: uid(), ts: Date.now(), campana: c.settings.campana, ...base });
       else Object.assign(c.movs.find((s) => s.id === orig.id), base);
+      if (tarea) c.tareas = c.tareas.filter((t) => t.id !== tarea.id);
     });
     if (!ok) return;
     ui.lastCat = f.categoria; ui.lastTipo = f.tipo;
@@ -507,7 +527,129 @@ function openMovForm(orig) {
       f.cantidad = ''; f.importe = ''; f.finca = '';
       if (stockMode) { const x = computeStock().get(f.producto); f.precio = x && x.avg != null ? fmtIn(x.avg) : ''; }
       draw(); const q = $('#aQ', box); if (q) q.focus();
-    } else { closeSheet(); toast(isNew ? 'Guardado' : 'Registro actualizado'); }
+    } else { closeSheet(); toast(tarea ? 'Tarea terminada · guardada en Actividad' : isNew ? 'Guardado' : 'Registro actualizado'); }
+  };
+  draw();
+}
+
+/* ---------- Pantalla: Organización (tareas pendientes de las fincas) ----------
+   Lo que hay que hacer en las próximas semanas, por finca y prioridad. No cuenta en las cuentas ni en el
+   stock: al terminar una tarea se abre el formulario de Actividad ya relleno y, al guardarlo, la tarea
+   se quita de aquí. Las tareas viajan con los datos (copia en fichero y _copia de la hoja). */
+const PRIO_ORDEN = { Alta: 0, Media: 1, Baja: 2 };
+const diasHasta = (iso) => Math.round((new Date(iso + 'T00:00:00') - new Date(todayISO() + 'T00:00:00')) / 86400000);
+const tareaVencida = (t) => !!t.limite && t.limite < todayISO();
+const horasRestantes = (t) => (t.horas > 0 ? t.horas * (1 - (t.estado === 'Empezada' ? (t.pct || 0) : 0) / 100) : 0);
+function limiteTxt(t) {
+  if (!t.limite) return 'sin fecha';
+  const d = diasHasta(t.limite);
+  if (d < 0) return `vencida hace ${-d} día${d === -1 ? '' : 's'}`;
+  if (d === 0) return 'hoy';
+  if (d === 1) return 'mañana';
+  if (d < 7) return `en ${d} días`;
+  return dayLabel(t.limite);
+}
+function ordenarTareas(list) {
+  return [...list].sort((a, b) => (tareaVencida(b) - tareaVencida(a)) || (PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad])
+    || (a.limite || '9999').localeCompare(b.limite || '9999') || a.ts - b.ts);
+}
+/* Precio por hora del último registro de Actividad igual (mismo tipo 2 y, si lo hay, mismo tipo de tarea). */
+function ultimoPrecioTarea(tipo, tipo2) {
+  const cand = state.movs.filter((m) => m.categoria === 'Tarea' && m.cantidad > 0 && m.precio > 0 && (m.tipo2 || '') === (tipo2 || ''))
+    .sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts);
+  const m = cand.find((x) => x.tipo === tipo) || (tipo2 ? cand[0] : null);
+  return m ? round(m.precio, 4) : null;
+}
+function renderOrganizacion() {
+  const fincas = state.fincas.filter((fi) => fi.activa !== false || state.tareas.some((t) => t.finca === fi.code));
+  if (ui.orgFinca !== 'todas' && !fincas.some((fi) => fi.code === ui.orgFinca)) ui.orgFinca = 'todas';
+  const enFinca = state.tareas.filter((t) => ui.orgFinca === 'todas' || t.finca === ui.orgFinca);
+  const items = ordenarTareas(enFinca.filter((t) => ui.orgPrio === 'Todas' || t.prioridad === ui.orgPrio));
+  const horas = items.reduce((s, t) => s + horasRestantes(t), 0);
+  const nPrio = (p) => enFinca.filter((t) => t.prioridad === p).length;
+  const rows = items.map((t) => {
+    const venc = tareaVencida(t);
+    const pct = t.estado === 'Empezada' ? Math.max(0, Math.min(100, t.pct || 0)) : 0;
+    return `<li><button class="row tarea prio-${t.prioridad.toLowerCase()}${venc ? ' venc' : ''}" data-id="${t.id}">
+      <div class="main"><div class="name">${esc(t.titulo)}</div>
+        <div class="sub"><span class="pill prio">${t.prioridad}</span>${esc(t.tipo)}${t.tipo2 ? ' · ' + esc(t.tipo2) : ''} · ${esc(fincaByCode(t.finca)?.name ?? t.finca)}</div>
+        ${t.estado === 'Empezada' ? `<div class="prog" aria-label="Avance ${pct} %"><i style="width:${pct}%"></i></div><div class="sub">Empezada · ${pct} %</div>` : ''}
+      </div>
+      <div class="side"><div class="lim${venc ? ' neg' : ''}">${limiteTxt(t)}</div><div class="sub">${t.horas > 0 ? qty(t.horas) + ' h' : ''}</div></div>
+    </button></li>`;
+  }).join('');
+  $('#view').innerHTML = `
+    <div class="toolbar">
+      <select id="orgFinca" class="grow" aria-label="Finca"><option value="todas">Todas las fincas</option>${fincas.map((fi) => `<option value="${fi.code}" ${fi.code === ui.orgFinca ? 'selected' : ''}>${esc(fi.name)}</option>`).join('')}</select>
+    </div>
+    <div class="chips" id="orgPrio">${['Todas', ...PRIORIDADES].map((p) => `<button class="chip${p === 'Todas' ? '' : ' prio-' + p.toLowerCase()}" data-p="${p}" aria-pressed="${ui.orgPrio === p}">${p}${p === 'Todas' ? '' : ' · ' + nPrio(p)}</button>`).join('')}</div>
+    <div class="summary"><span>Tareas <b>${items.length}</b></span><span>Vencidas <b${items.some(tareaVencida) ? ' class="neg"' : ''}>${items.filter(tareaVencida).length}</b></span><span>Empezadas <b>${items.filter((t) => t.estado === 'Empezada').length}</b></span><span>Horas por delante <b>${qty(round(horas, 1))} h</b></span></div>
+    ${items.length ? `<ul class="list">${rows}</ul><p class="small" style="margin:14px 4px">Cuando acabes una tarea, ábrela y pulsa «Terminada»: se abre el registro de Actividad ya relleno.</p>`
+      : `<div class="empty">${state.tareas.length ? 'No hay tareas en este filtro.' : 'Aún no tienes tareas apuntadas.'}<br>Pulsa «Nueva tarea» para apuntar lo que hay que hacer.</div>`}`;
+  $('#orgFinca').onchange = (e) => { ui.orgFinca = e.target.value; renderOrganizacion(); };
+  $('#orgPrio').onclick = (e) => { const b = e.target.closest('[data-p]'); if (b) { ui.orgPrio = b.dataset.p; renderOrganizacion(); } };
+  const ul = $('#view .list'); if (ul) ul.onclick = (e) => { const b = e.target.closest('[data-id]'); if (b) openTareaForm(state.tareas.find((x) => x.id === b.dataset.id)); };
+}
+function openTareaForm(orig) {
+  const isNew = !orig;
+  const f = orig
+    ? { titulo: orig.titulo, tipo: orig.tipo, tipo2: orig.tipo2 || '', finca: orig.finca, prioridad: orig.prioridad, limite: orig.limite || '', horas: orig.horas > 0 ? fmtIn(orig.horas) : '', estado: orig.estado, pct: orig.pct || 0, nota: orig.nota || '' }
+    : { titulo: '', tipo: '', tipo2: '', finca: ui.orgFinca !== 'todas' ? ui.orgFinca : '', prioridad: ui.orgPrio !== 'Todas' ? ui.orgPrio : 'Media', limite: '', horas: '', estado: 'Pendiente', pct: 0, nota: '' };
+  const body = openSheet(isNew ? 'Nueva tarea' : 'Tarea', '<div id="tf"></div>');
+  const box = $('#tf', body);
+  const draw = () => {
+    box.innerHTML = `
+      <label class="fld"><span>Tarea</span><input id="tTi" type="text" value="${esc(f.titulo)}" placeholder="Ej.: Podar la parte de arriba" autocomplete="off"></label>
+      <div class="fld"><span>Tipo</span><div class="chips wrap" data-k="tipo">${TIPOS.Tarea.map((t) => `<button type="button" class="chip" data-v="${esc(t)}" aria-pressed="${f.tipo === t}">${esc(t)}</button>`).join('')}</div></div>
+      <div class="fld"><span>Quién la hace</span><div class="chips wrap" data-k="tipo2">${TIPO2.map((t) => `<button type="button" class="chip" data-v="${t}" aria-pressed="${f.tipo2 === t}">${t}</button>`).join('')}</div></div>
+      <div class="fld"><span>Finca</span><div class="grid2" data-k="finca">${state.fincas.filter((fi) => fi.activa !== false || fi.code === f.finca).map((fi) => `<button type="button" class="opt" data-v="${fi.code}" aria-pressed="${f.finca === fi.code}"><b>${fi.code}</b>${esc(fi.name)}</button>`).join('')}</div></div>
+      <div class="fld"><span>Prioridad</span><div class="chips" data-k="prioridad">${PRIORIDADES.map((p) => `<button type="button" class="chip prio-${p.toLowerCase()}" data-v="${p}" aria-pressed="${f.prioridad === p}">${p}</button>`).join('')}</div></div>
+      <div class="grid2">
+        <label class="fld"><span>Fecha límite</span><input id="tLi" type="date" value="${f.limite}"></label>
+        <label class="fld"><span>Horas previstas</span><input id="tHo" type="text" inputmode="decimal" value="${esc(f.horas)}" placeholder="Opcional"></label>
+      </div>
+      <div class="fld"><span>Estado</span><div class="chips" data-k="estado">${ESTADOS_TAREA.map((e) => `<button type="button" class="chip" data-v="${e}" aria-pressed="${f.estado === e}">${e}</button>`).join('')}</div></div>
+      ${f.estado === 'Empezada' ? `<label class="fld"><span>Avance: <b id="tPv">${f.pct} %</b></span><input id="tPc" type="range" min="0" max="100" step="5" value="${f.pct}"></label>` : ''}
+      <label class="fld"><span>Nota</span><textarea id="tNo" rows="2" placeholder="Opcional: productos, quién viene, qué falta…">${esc(f.nota)}</textarea></label>
+      <div class="actions two">
+        ${isNew ? '<span></span>' : '<button class="btn danger" id="tDel">Borrar</button>'}
+        <button class="btn${isNew ? ' primary' : ''}" id="tSave">Guardar</button>
+      </div>
+      ${isNew ? '' : '<div class="actions"><button class="btn primary" id="tFin">✓ Terminada → pasar a Actividad</button></div>'}`;
+    $('#tTi', box).oninput = (e) => { f.titulo = e.target.value; };
+    $('#tLi', box).onchange = (e) => { f.limite = e.target.value; };
+    $('#tHo', box).oninput = (e) => { f.horas = e.target.value; };
+    $('#tNo', box).oninput = (e) => { f.nota = e.target.value; };
+    const pc = $('#tPc', box); if (pc) pc.oninput = (e) => { f.pct = Number(e.target.value); $('#tPv', box).textContent = f.pct + ' %'; };
+    box.querySelectorAll('[data-k]').forEach((grp) => {
+      grp.onclick = (e) => {
+        const b = e.target.closest('[data-v]'); if (!b) return;
+        const k = grp.dataset.k, v = b.dataset.v;
+        f[k] = k === 'tipo2' && f.tipo2 === v ? '' : v;
+        draw();
+      };
+    });
+    $('#tSave', box).onclick = () => { if (guardar()) { closeSheet(); toast(isNew ? 'Tarea apuntada' : 'Tarea actualizada'); } };
+    if (!isNew) {
+      armDelete($('#tDel', box), () => { if (commit((c) => { c.tareas = c.tareas.filter((t) => t.id !== orig.id); })) { closeSheet(); toast('Tarea borrada'); } });
+      $('#tFin', box).onclick = () => { const t = guardar(); if (t) reopenSheet(() => openMovForm(null, { tarea: t })); };
+    }
+  };
+  /* Valida y guarda; devuelve la tarea guardada o null. */
+  const guardar = () => {
+    const titulo = f.titulo.trim();
+    if (!titulo) { toast('Escribe la tarea', true); return null; }
+    if (!f.tipo) { toast('Elige el tipo de tarea', true); return null; }
+    if (!f.finca) { toast('Elige la finca', true); return null; }
+    let horas = null;
+    if (String(f.horas).trim()) { horas = parseNum(f.horas); if (!isFinite(horas) || horas < 0) { toast('Las horas previstas no son un número válido', true); return null; } }
+    const datos = { titulo, tipo: f.tipo, tipo2: f.tipo2, finca: f.finca, prioridad: f.prioridad, limite: f.limite || '', horas, estado: f.estado, pct: f.estado === 'Empezada' ? f.pct : 0, nota: f.nota.trim() };
+    let guardada = null;
+    const ok = commit((c) => {
+      if (isNew) { guardada = { id: uid(), ts: Date.now(), ...datos }; c.tareas.push(guardada); }
+      else { const t = c.tareas.find((x) => x.id === orig.id); if (!t) throw new Error('La tarea ya no existe'); Object.assign(t, datos); guardada = t; }
+    });
+    return ok ? structuredClone(guardada) : null;
   };
   draw();
 }
@@ -1437,9 +1579,9 @@ function renderAll() {
   $('#totalValor').textContent = eur(totalValor(m));
   document.querySelectorAll('.tab').forEach((b) => { if (b.dataset.tab === ui.tab) b.setAttribute('aria-current', 'page'); else b.removeAttribute('aria-current'); });
   renderSyncStatus(); renderMxStatus();
-  $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : 'Nuevo registro';
+  $('#fabLabel').textContent = ui.tab === 'stock' ? 'Producto nuevo' : ui.tab === 'entradas' ? 'Nueva entrada' : ui.tab === 'organizacion' ? 'Nueva tarea' : 'Nuevo registro';
   $('#fab').style.display = ui.tab === 'buscar' ? 'none' : '';
-  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else if (ui.tab === 'buscar') renderBuscar(); else renderSalidas();
+  if (ui.tab === 'stock') renderStock(); else if (ui.tab === 'entradas') renderEntradas(); else if (ui.tab === 'organizacion') renderOrganizacion(); else if (ui.tab === 'buscar') renderBuscar(); else renderSalidas();
   if (appVacia()) {
     $('#view').insertAdjacentHTML('afterbegin', `<div class="notice"><b>Este móvil todavía no tiene datos</b><p class="small">La app ya no lleva el stock dentro. Restáuralo una vez desde Ajustes: «Copia automática en Google Sheets» → «Restaurar desde la hoja», o «Restaurar desde fichero» con la copia guardada en Drive (Apps › Copia de seguridad).</p><button class="btn primary" id="goAj">Abrir Ajustes</button></div>`);
     $('#goAj').onclick = openSettings;
@@ -1449,7 +1591,7 @@ function renderAll() {
 async function init() {
   document.querySelectorAll('.tab').forEach((b) => b.onclick = () => { ui.tab = b.dataset.tab; window.scrollTo(0, 0); renderAll(); });
   $('#btnSettings').onclick = openSettings;
-  $('#fab').onclick = () => { if (ui.tab === 'stock') openProductSheet(null); else if (ui.tab === 'entradas') openEntradaForm(null); else openMovForm(null); };
+  $('#fab').onclick = () => { if (ui.tab === 'stock') openProductSheet(null); else if (ui.tab === 'entradas') openEntradaForm(null); else if (ui.tab === 'organizacion') openTareaForm(null); else openMovForm(null); };
   await loadSync();
   $('#syncStatus').onclick = openSettings;
   $('#mxStatus').onclick = () => openEnlace();
@@ -1464,7 +1606,7 @@ async function init() {
   try {
     let s = await dbGet('state');
     if (!s) { s = emptyState(); await dbSet('state', s); }
-    else if (!s.v || s.v < 4) {
+    else if (!s.v || s.v < 5) {
       const antes = JSON.stringify(s.movs || []);
       migrar(s); await dbSet('state', s);
       if (JSON.stringify(s.movs) !== antes && syncOn()) { sync.dirty = true; saveSync(); } // que la Tabla principal recoja el cambio
