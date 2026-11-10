@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.8.0';
+const APP_VERSION = '2.9.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -91,7 +91,7 @@ function persist() {
   return saveChain;
 }
 function emptyState() {
-  return { v: 5, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [], tareas: [] };
+  return { v: 6, settings: { campana: new Date().getFullYear(), lastBackup: null }, productos: [], entradas: [], movs: [], fincas: structuredClone(FINCAS_BASE), mxPend: [], tareas: [], hechas: [] };
 }
 /* v1 → v2: lista de fincas en los datos, enlace con maestros y cola de altas. No cambia ningún registro.
    v2 → v3: tipos con tilde (Fumigacion → Fumigación, etc.). Solo cambia el texto del tipo.
@@ -111,7 +111,9 @@ function migrar(s) {
   }
   if (!s.v || s.v < 4) for (const m of s.movs || []) m.tipo = tipoSeguro(m.categoria, m.tipo, m.desc);
   if (!Array.isArray(s.tareas)) s.tareas = [];
-  s.v = 5;
+  // v6: registro de tareas terminadas (semana prevista y día real) para la Vista única. No cambia nada de lo anotado.
+  if (!Array.isArray(s.hechas)) s.hechas = [];
+  s.v = 6;
   return s;
 }
 const appVacia = () => !state.productos.length && !state.movs.length && !state.entradas.length;
@@ -517,7 +519,11 @@ function openMovForm(orig, opts = {}) {
     const ok = commit((c) => {
       if (isNew) c.movs.push({ id: uid(), ts: Date.now(), campana: c.settings.campana, ...base });
       else Object.assign(c.movs.find((s) => s.id === orig.id), base);
-      if (tarea) c.tareas = c.tareas.filter((t) => t.id !== tarea.id);
+      if (tarea) {
+        const t0 = c.tareas.find((t) => t.id === tarea.id);
+        c.tareas = c.tareas.filter((t) => t.id !== tarea.id);
+        if (t0 && !c.hechas.some((h) => h.id === t0.id)) c.hechas.push({ id: t0.id, titulo: t0.titulo, tipo: t0.tipo, tipo2: t0.tipo2 || '', finca: t0.finca, prioridad: t0.prioridad, limite: t0.limite || '', horas: t0.horas || 0, creada: t0.ts ? new Date(t0.ts - new Date(t0.ts).getTimezoneOffset() * 60000).toISOString().slice(0, 10) : '', hecha: base.fecha, horasReales: base.cantidad });
+      }
     });
     if (!ok) return;
     ui.lastCat = f.categoria; ui.lastTipo = f.tipo;
@@ -1655,7 +1661,7 @@ async function init() {
   try {
     let s = await dbGet('state');
     if (!s) { s = emptyState(); await dbSet('state', s); }
-    else if (!s.v || s.v < 5) {
+    else if (!s.v || s.v < 6) {
       const antes = JSON.stringify(s.movs || []);
       migrar(s); await dbSet('state', s);
       if (JSON.stringify(s.movs) !== antes && syncOn()) { sync.dirty = true; saveSync(); } // que la Tabla principal recoja el cambio
