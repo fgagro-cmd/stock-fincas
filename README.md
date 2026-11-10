@@ -56,6 +56,8 @@ Para **actualizar** el script sin cambiar la dirección: pega el código nuevo �
    ```
 4. Implementar → Gestionar implementaciones → lápiz → «Nueva versión» → Implementar.
 
+**Semanas (v2.8.0):** al apuntar una tarea, los botones «Esta semana», «La que viene» y «En 2 semanas» ponen como fecha límite el domingo de esa semana (semanas de lunes a domingo); «Otra fecha» abre el calendario. La lista se agrupa en Vencidas, Esta semana, La semana que viene, Dentro de 2 semanas, Más adelante y Sin fecha; dentro de cada grupo, por prioridad.
+
 ## Calendario (desde la v2.7.0)
 Las tareas de **Organización** con fecha límite se copian solas a un calendario de Google llamado **«Fincas»**: un evento de todo el día por tarea, con aviso la víspera a las 8:00. Título: prioridad (🔴 Alta, 🟠 Media, 🟢 Baja) + tarea + finca (+ % si está empezada). Dentro: tipo, quién la hace, horas, estado y nota. Las tareas sin fecha no salen. Es de un solo sentido: manda la app (si cambias o borras un evento en Calendar, se rehace en el siguiente envío). Al terminar o borrar la tarea, el evento desaparece.
 

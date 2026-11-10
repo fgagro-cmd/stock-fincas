@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.7.0';
+const APP_VERSION = '2.8.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -549,8 +549,24 @@ function limiteTxt(t) {
   if (d < 7) return `en ${d} días`;
   return dayLabel(t.limite);
 }
+/* Semanas de lunes a domingo. La fecha límite de «esta semana» es su domingo. */
+function sumarDias(iso, n) { const d = new Date(iso + 'T12:00:00'); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); }
+function domingoDe(iso) { const wd = new Date(iso + 'T12:00:00').getDay(); return sumarDias(iso, (7 - wd) % 7); }
+const domingoEn = (n) => sumarDias(domingoDe(todayISO()), 7 * n);
+const SEMANAS_RAPIDAS = [['Esta semana', 0], ['La que viene', 1], ['En 2 semanas', 2]];
+/* Grupo de la lista: vencidas, esta semana, la que viene, en 2 semanas, más adelante o sin fecha. */
+function grupoSemana(t) {
+  if (!t.limite) return { k: 9, txt: 'Sin fecha' };
+  if (tareaVencida(t)) return { k: -1, txt: 'Vencidas' };
+  const n = Math.round((new Date(domingoDe(t.limite) + 'T12:00:00') - new Date(domingoEn(0) + 'T12:00:00')) / (7 * 86400000));
+  const hasta = ' · hasta el domingo ' + new Date(domingoDe(t.limite) + 'T12:00:00').toLocaleDateString('es-ES', { day: 'numeric', month: 'short' });
+  if (n <= 0) return { k: 0, txt: 'Esta semana' + hasta };
+  if (n === 1) return { k: 1, txt: 'La semana que viene' + hasta };
+  if (n === 2) return { k: 2, txt: 'Dentro de 2 semanas' + hasta };
+  return { k: 3, txt: 'Más adelante' };
+}
 function ordenarTareas(list) {
-  return [...list].sort((a, b) => (tareaVencida(b) - tareaVencida(a)) || (PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad])
+  return [...list].sort((a, b) => (grupoSemana(a).k - grupoSemana(b).k) || (PRIO_ORDEN[a.prioridad] - PRIO_ORDEN[b.prioridad])
     || (a.limite || '9999').localeCompare(b.limite || '9999') || a.ts - b.ts);
 }
 /* Precio por hora del último registro de Actividad igual (mismo tipo 2 y, si lo hay, mismo tipo de tarea). */
@@ -567,10 +583,13 @@ function renderOrganizacion() {
   const items = ordenarTareas(enFinca.filter((t) => ui.orgPrio === 'Todas' || t.prioridad === ui.orgPrio));
   const horas = items.reduce((s, t) => s + horasRestantes(t), 0);
   const nPrio = (p) => enFinca.filter((t) => t.prioridad === p).length;
+  let grupoAnt = null;
   const rows = items.map((t) => {
     const venc = tareaVencida(t);
+    const g = grupoSemana(t);
+    const head = g.k !== grupoAnt ? `<li class="day sem${g.k === -1 ? ' neg' : ''}">${esc(g.txt)} <span>· ${items.filter((x) => grupoSemana(x).k === g.k).length}</span></li>` : ''; grupoAnt = g.k;
     const pct = t.estado === 'Empezada' ? Math.max(0, Math.min(100, t.pct || 0)) : 0;
-    return `<li><button class="row tarea prio-${t.prioridad.toLowerCase()}${venc ? ' venc' : ''}" data-id="${t.id}">
+    return `${head}<li><button class="row tarea prio-${t.prioridad.toLowerCase()}${venc ? ' venc' : ''}" data-id="${t.id}">
       <div class="main"><div class="name">${esc(t.titulo)}</div>
         <div class="sub"><span class="pill prio">${t.prioridad}</span>${esc(t.tipo)}${t.tipo2 ? ' · ' + esc(t.tipo2) : ''} · ${esc(fincaByCode(t.finca)?.name ?? t.finca)}</div>
         ${t.estado === 'Empezada' ? `<div class="prog" aria-label="Avance ${pct} %"><i style="width:${pct}%"></i></div><div class="sub">Empezada · ${pct} %</div>` : ''}
@@ -583,7 +602,7 @@ function renderOrganizacion() {
       <select id="orgFinca" class="grow" aria-label="Finca"><option value="todas">Todas las fincas</option>${fincas.map((fi) => `<option value="${fi.code}" ${fi.code === ui.orgFinca ? 'selected' : ''}>${esc(fi.name)}</option>`).join('')}</select>
     </div>
     <div class="chips" id="orgPrio">${['Todas', ...PRIORIDADES].map((p) => `<button class="chip${p === 'Todas' ? '' : ' prio-' + p.toLowerCase()}" data-p="${p}" aria-pressed="${ui.orgPrio === p}">${p}${p === 'Todas' ? '' : ' · ' + nPrio(p)}</button>`).join('')}</div>
-    <div class="summary"><span>Tareas <b>${items.length}</b></span><span>Vencidas <b${items.some(tareaVencida) ? ' class="neg"' : ''}>${items.filter(tareaVencida).length}</b></span><span>Empezadas <b>${items.filter((t) => t.estado === 'Empezada').length}</b></span><span>Horas por delante <b>${qty(round(horas, 1))} h</b></span></div>
+    <div class="summary"><span>Tareas <b>${items.length}</b></span><span>Esta semana <b>${items.filter((t) => grupoSemana(t).k === 0).length}</b></span><span>Vencidas <b${items.some(tareaVencida) ? ' class="neg"' : ''}>${items.filter(tareaVencida).length}</b></span><span>Empezadas <b>${items.filter((t) => t.estado === 'Empezada').length}</b></span><span>Horas por delante <b>${qty(round(horas, 1))} h</b></span></div>
     ${items.length ? `<ul class="list">${rows}</ul><p class="small" style="margin:14px 4px">Cuando acabes una tarea, ábrela y pulsa «Terminada»: se abre el registro de Actividad ya relleno.</p>`
       : `<div class="empty">${state.tareas.length ? 'No hay tareas en este filtro.' : 'Aún no tienes tareas apuntadas.'}<br>Pulsa «Nueva tarea» para apuntar lo que hay que hacer.</div>`}`;
   $('#orgFinca').onchange = (e) => { ui.orgFinca = e.target.value; renderOrganizacion(); };
@@ -604,6 +623,7 @@ function openTareaForm(orig) {
       <div class="fld"><span>Quién la hace</span><div class="chips wrap" data-k="tipo2">${TIPO2.map((t) => `<button type="button" class="chip" data-v="${t}" aria-pressed="${f.tipo2 === t}">${t}</button>`).join('')}</div></div>
       <div class="fld"><span>Finca</span><div class="grid2" data-k="finca">${state.fincas.filter((fi) => fi.activa !== false || fi.code === f.finca).map((fi) => `<button type="button" class="opt" data-v="${fi.code}" aria-pressed="${f.finca === fi.code}"><b>${fi.code}</b>${esc(fi.name)}</button>`).join('')}</div></div>
       <div class="fld"><span>Prioridad</span><div class="chips" data-k="prioridad">${PRIORIDADES.map((p) => `<button type="button" class="chip prio-${p.toLowerCase()}" data-v="${p}" aria-pressed="${f.prioridad === p}">${p}</button>`).join('')}</div></div>
+      <div class="fld"><span>Semana</span><div class="chips wrap" id="tSem">${SEMANAS_RAPIDAS.map(([txt, n]) => `<button type="button" class="chip" data-n="${n}" aria-pressed="${f.limite === domingoEn(n)}">${txt}</button>`).join('')}<button type="button" class="chip" data-n="x" aria-pressed="${!!f.limite && !SEMANAS_RAPIDAS.some(([, n]) => f.limite === domingoEn(n))}">Otra fecha</button></div></div>
       <div class="grid2">
         <label class="fld"><span>Fecha límite</span><input id="tLi" type="date" value="${f.limite}"></label>
         <label class="fld"><span>Horas previstas</span><input id="tHo" type="text" inputmode="decimal" value="${esc(f.horas)}" placeholder="Opcional"></label>
@@ -617,7 +637,12 @@ function openTareaForm(orig) {
       </div>
       ${isNew ? '' : '<div class="actions"><button class="btn primary" id="tFin">✓ Terminada → pasar a Actividad</button></div>'}`;
     $('#tTi', box).oninput = (e) => { f.titulo = e.target.value; };
-    $('#tLi', box).onchange = (e) => { f.limite = e.target.value; };
+    $('#tLi', box).onchange = (e) => { f.limite = e.target.value; draw(); };
+    $('#tSem', box).onclick = (e) => {
+      const b = e.target.closest('[data-n]'); if (!b) return;
+      if (b.dataset.n === 'x') { const i = $('#tLi', box); i.focus(); try { i.showPicker(); } catch (_) { /* nada */ } return; }
+      f.limite = domingoEn(Number(b.dataset.n)); draw();
+    };
     $('#tHo', box).oninput = (e) => { f.horas = e.target.value; };
     $('#tNo', box).oninput = (e) => { f.nota = e.target.value; };
     const pc = $('#tPc', box); if (pc) pc.oninput = (e) => { f.pct = Number(e.target.value); $('#tPv', box).textContent = f.pct + ' %'; };
