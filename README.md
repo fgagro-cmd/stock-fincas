@@ -56,6 +56,19 @@ Para **actualizar** el script sin cambiar la dirección: pega el código nuevo �
    ```
 4. Implementar → Gestionar implementaciones → lápiz → «Nueva versión» → Implementar.
 
+## Calendario (desde la v2.7.0)
+Las tareas de **Organización** con fecha límite se copian solas a un calendario de Google llamado **«Fincas»**: un evento de todo el día por tarea, con aviso la víspera a las 8:00. Título: prioridad (🔴 Alta, 🟠 Media, 🟢 Baja) + tarea + finca (+ % si está empezada). Dentro: tipo, quién la hace, horas, estado y nota. Las tareas sin fecha no salen. Es de un solo sentido: manda la app (si cambias o borras un evento en Calendar, se rehace en el siguiente envío). Al terminar o borrar la tarea, el evento desaparece.
+
+Para activarlo (una sola vez, en el mismo script de la hoja):
+1. Apps Script → pega el nuevo `Codigo.gs` (conserva tu clave) → Guardar.
+2. ⚙ Configuración del proyecto → marca «Mostrar el archivo de manifiesto appsscript.json» → abre `appsscript.json`, deja el contenido de `google-sheets/appsscript.json` (añade el permiso de Calendar) → Guardar.
+3. Arriba, en el selector de funciones, elige `autorizarCalendario` → ▶ Ejecutar → acepta los permisos. Esto crea el calendario «Fincas».
+4. Implementar → Gestionar implementaciones → lápiz → Versión: «Nueva versión» → Implementar.
+5. En la app: Ajustes → Copia automática → «Sincronizar ahora». Debe poner «📅 Al día».
+6. En la app de Calendar del móvil: ☰ → comprueba que «Fincas» está marcado. Ahí puedes ponerle el color que quieras.
+
+En Ajustes se puede desactivar con el interruptor «Tareas de Organización en Google Calendar» (los eventos que ya existan se quedan).
+
 La app reescribe las pestañas Tabla principal (todas las líneas con las 12 columnas de tu Excel, la más reciente arriba), Entradas y Stock en cada envío. La clave nunca se sube a GitHub: se guarda solo en el móvil y en el script de tu hoja.
 
 ## Cuentas fincas

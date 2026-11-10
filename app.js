@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.6.0';
+const APP_VERSION = '2.7.0';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -859,7 +859,7 @@ function drawResultados() {
 /* ---------- Copia automática en Google Sheets ----------
    La app envía el estado completo al receptor (Apps Script). La hoja es un espejo de un solo sentido:
    sin conexión queda "pendiente" y se envía al volver la conexión. */
-let sync = { url: '', clave: '', enabled: false, dirty: false, lastOk: null, lastError: '' };
+let sync = { url: '', clave: '', enabled: false, dirty: false, lastOk: null, lastError: '', cal: true, calMsg: '' };
 let syncRev = 0, syncTimer = null, syncRetry = null, syncRunning = false;
 const syncOn = () => !!(sync.enabled && sync.url && sync.clave);
 async function loadSync() { try { const s = await dbGet('sync'); if (s) sync = { ...sync, ...s }; } catch (_) { /* nada */ } }
@@ -891,7 +891,10 @@ function syncPayload() {
   const stock = [...m.values()].sort((a, b) => CAT_STOCK.indexOf(a.p.categoria) - CAT_STOCK.indexOf(b.p.categoria) || a.p.nombre.localeCompare(b.p.nombre, 'es'))
     .map((x) => [x.p.nombre, x.p.categoria, x.q, x.avg != null ? round(x.avg, 4) : '', x.q > EPS ? round(x.v, 2) : 0]);
   const tabla = [...state.movs].sort((a, b) => b.fecha.localeCompare(a.fecha) || b.ts - a.ts).map((s) => [s.fecha, s.desc, s.campana, s.categoria, s.tipo, s.tipo2 || '', fincaByCode(s.finca)?.name ?? s.finca, s.cantidad, round(s.precio, 6), s.importe, MESES[Number(s.fecha.slice(5, 7)) - 1], Number(s.fecha.slice(0, 4))]);
-  return { tabla, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+  const out = { tabla, entradas, stock, total: round(totalValor(m), 2), estado: JSON.stringify(state), version: APP_VERSION };
+  // Tareas de Organización para el calendario «Fincas» de Google (solo si está activado)
+  if (sync.cal) out.tareas = state.tareas.map((t) => ({ id: t.id, titulo: t.titulo, tipo: t.tipo, quien: t.tipo2 || '', finca: fincaByCode(t.finca)?.name ?? t.finca, prioridad: t.prioridad, limite: t.limite || '', horas: t.horas || 0, estado: t.estado, pct: t.pct || 0, nota: t.nota || '' }));
+  return out;
 }
 async function runSync() {
   if (!syncOn() || syncRunning) return;
@@ -901,6 +904,7 @@ async function runSync() {
     const r = await callScript('sincronizar', syncPayload());
     if (!r.ok) throw new Error(r.error === 'clave' ? 'La clave no coincide con la del script' : (r.error || 'Error del receptor'));
     sync.lastOk = new Date().toISOString(); sync.lastError = '';
+    sync.calMsg = calMensaje(r.calendario);
     if (syncRev === rev) sync.dirty = false;
   } catch (e) {
     sync.lastError = e.message || String(e); sync.dirty = true;
@@ -918,6 +922,16 @@ function ago(iso) {
   if (min < 1440) return `hace ${Math.round(min / 60)} h`;
   return new Date(iso).toLocaleDateString('es-ES');
 }
+function calMensaje(c) {
+  if (!sync.cal) return '';
+  if (!c) return 'Falta actualizar el script de Google (ver README: «Calendario»)';
+  if (c.ok) return `Al día · ${c.eventos} ${c.eventos === 1 ? 'tarea con fecha' : 'tareas con fecha'} en el calendario «Fincas»`;
+  return /permiso|permission|authoriz|autoriz|scope|access/i.test(c.error || '') ? 'Falta dar el permiso de Calendar en el script (ver README: «Calendario»)' : 'No se pudo: ' + (c.error || 'error del script');
+}
+function calStatusText() {
+  if (!sync.cal) return '📅 Calendar desactivado';
+  return sync.calMsg ? '📅 ' + sync.calMsg : '📅 Se enviará en la próxima sincronización';
+}
 function syncStatusText() {
   if (!syncOn()) return '';
   if (syncRunning) return '☁ Enviando a Google Sheets…';
@@ -928,6 +942,7 @@ function syncStatusText() {
 function renderSyncStatus() {
   const el = $('#syncStatus'); if (el) { el.textContent = syncStatusText(); el.hidden = !syncOn(); }
   const box = $('#syncLine'); if (box) box.textContent = syncStatusText();
+  const cl = $('#calLine'); if (cl) cl.textContent = calStatusText();
 }
 function validState(s) { return s && Array.isArray(s.productos) && Array.isArray(s.entradas) && Array.isArray(s.movs) && s.settings; }
 
@@ -936,11 +951,20 @@ function drawSync(box) {
     box.innerHTML = `
       <p class="small" id="syncLine">${esc(syncStatusText())}</p>
       <p class="small">Cada cambio se envía solo a tu hoja de Google (pestañas Tabla principal, Entradas y Stock). Sin conexión se queda pendiente y se envía al volver.</p>
+      <div class="fld"><span>Tareas de Organización en Google Calendar (calendario «Fincas»)</span><div class="chips" id="calSw"><button type="button" class="chip" data-v="1" aria-pressed="${sync.cal}">Sí</button><button type="button" class="chip" data-v="0" aria-pressed="${!sync.cal}">No</button></div></div>
+      <p class="small" id="calLine">${esc(calStatusText())}</p>
+      <p class="small">Cada tarea con fecha límite aparece como evento de todo el día, con aviso la víspera a las 8:00. Las tareas sin fecha no salen. Lo que cambies en Calendar se rehace: manda la app.</p>
       <div class="actions">
         <button class="btn primary" id="syNow">Sincronizar ahora</button>
         <button class="btn" id="syRes">Restaurar desde la hoja</button>
         <button class="btn danger" id="syOff">Desactivar</button>
       </div>`;
+    $('#calSw', box).onclick = (e) => {
+      const b = e.target.closest('[data-v]'); if (!b) return;
+      const on = b.dataset.v === '1'; if (on === sync.cal) return;
+      sync.cal = on; if (on) sync.calMsg = ''; saveSync(); drawSync(box);
+      if (on) { markDirty(); toast('Calendar activado: se enviará ahora'); } else toast('Calendar desactivado. Los eventos que ya hay se quedan en Calendar');
+    };
     $('#syNow', box).onclick = () => { if (!navigator.onLine) return toast('Sin conexión: se enviará al volver', true); sync.lastError = ''; markDirty(); clearTimeout(syncTimer); runSync(); };
     $('#syRes', box).onclick = async () => {
       try {

@@ -13,6 +13,10 @@
  *   Parámetros      -> mano de obra propia (€/h) y reglas de arrendamiento de cada finca
  *
  * La superficie y el número de árboles de cada finca se leen del «Maestro de fincas» (Drive › Apps › Maestros).
+ *
+ * Calendario (desde la v2.7.0 de la app): las tareas de la pestaña «Organización» que tienen fecha límite se copian
+ * a un calendario de Google propio llamado «Fincas» (un evento de todo el día por tarea, con aviso la víspera a las 8:00).
+ * Es un espejo de un solo sentido: manda la app; si cambias o borras un evento en Calendar, se rehace en el siguiente envío.
  */
 
 const CLAVE = 'CAMBIA-ESTA-CLAVE'; // debe ser idéntica a la que escribes en las apps (Ajustes)
@@ -23,6 +27,9 @@ const CAB_ENTRADAS = ['Fecha', 'Producto', 'Categoría', 'Cantidad', 'Precio uni
 const CAB_STOCK = ['Producto', 'Categoría', 'Stock', 'Precio medio', 'Valor'];
 const CAB_PRESUP = ['Campaña', 'Finca ID', 'Finca', 'Concepto', 'Descripción', 'Valor', 'Actualizado'];
 const CAB_PARAM = ['Clave', 'Valor', 'Descripción'];
+const CAL_NOMBRE = 'Fincas';
+const CAL_AVISO_MIN = 960; // minutos antes de las 00:00 del día límite: 16 h = la víspera a las 8:00
+const PRIO_ICONO = { Alta: '🔴', Media: '🟠', Baja: '🟢' };
 const MESES = ['enero', 'febrero', 'marzo', 'abril', 'mayo', 'junio', 'julio', 'agosto', 'septiembre', 'octubre', 'noviembre', 'diciembre'];
 
 function doGet() {
@@ -97,7 +104,87 @@ function sincronizar(req) {
   const vieja = libro().getSheetByName(HOJAS.antigua);
   if (vieja) libro().deleteSheet(vieja);
 
-  return { ok: true, lineas: tabla.length, entradas: entradas.length, productos: stock.length - 1, fecha: new Date().toISOString() };
+  const res = { ok: true, lineas: tabla.length, entradas: entradas.length, productos: stock.length - 1, fecha: new Date().toISOString() };
+  // El calendario va el último y aparte: si falla (por ejemplo, falta el permiso), la hoja ya está guardada.
+  if (Array.isArray(req.tareas)) {
+    try { res.calendario = sincronizarCalendario(req.tareas); }
+    catch (err) { res.calendario = { ok: false, error: String((err && err.message) || err) }; }
+  }
+  return res;
+}
+
+/* ---------- Calendario «Fincas» ---------- */
+function calendarioFincas() {
+  const propios = CalendarApp.getCalendarsByName(CAL_NOMBRE).filter(function (c) { return c.isOwnedByMe(); });
+  if (propios.length) return propios[0];
+  return CalendarApp.createCalendar(CAL_NOMBRE, { timeZone: Session.getScriptTimeZone(), summary: 'Tareas pendientes de Gestión fincas (las escribe la app; no edites aquí)' });
+}
+
+function textoTarea(t) {
+  const l = [];
+  l.push('Tarea: ' + t.titulo);
+  l.push('Tipo: ' + t.tipo + (t.quien ? ' · ' + t.quien : ''));
+  l.push('Finca: ' + t.finca);
+  l.push('Prioridad: ' + t.prioridad);
+  if (t.horas > 0) l.push('Horas previstas: ' + t.horas + ' h');
+  l.push('Estado: ' + (t.estado === 'Empezada' ? 'Empezada ' + (t.pct || 0) + ' %' : 'Pendiente'));
+  if (t.nota) l.push('Nota: ' + t.nota);
+  l.push('');
+  l.push('Escrito por Gestión fincas. No lo cambies aquí: manda la app.');
+  l.push('[gf:' + t.id + ']');
+  return l.join('\n');
+}
+
+function sincronizarCalendario(tareas) {
+  const cal = calendarioFincas();
+  const zona = Session.getScriptTimeZone();
+  const ahora = Date.now();
+  const existentes = {};
+  cal.getEvents(new Date(ahora - 730 * 864e5), new Date(ahora + 730 * 864e5)).forEach(function (ev) {
+    const m = /\[gf:([^\]]+)\]/.exec(ev.getDescription() || '');
+    if (m) (existentes[m[1]] = existentes[m[1]] || []).push(ev);
+  });
+
+  const quiero = {};
+  let creados = 0, cambiados = 0, borrados = 0;
+  tareas.forEach(function (t) {
+    if (!t || !t.id || !t.limite) return; // sin fecha límite no hay evento
+    quiero[t.id] = true;
+    const titulo = (PRIO_ICONO[t.prioridad] || '') + ' ' + t.titulo + ' · ' + t.finca + (t.estado === 'Empezada' && t.pct > 0 ? ' · ' + t.pct + ' %' : '');
+    const desc = textoTarea(t);
+    const dia = Utilities.parseDate(String(t.limite), zona, 'yyyy-MM-dd');
+    const evs = existentes[t.id] || [];
+    evs.slice(1).forEach(function (x) { x.deleteEvent(); borrados++; }); // duplicados (por si acaso)
+    if (!evs.length) {
+      const ev = cal.createAllDayEvent(titulo, dia, { description: desc });
+      ev.removeAllReminders();
+      ev.addPopupReminder(CAL_AVISO_MIN);
+      creados++;
+      return;
+    }
+    const ev = evs[0];
+    let tocado = false;
+    if (ev.getTitle() !== titulo) { ev.setTitle(titulo); tocado = true; }
+    if (ev.getDescription() !== desc) { ev.setDescription(desc); tocado = true; }
+    const mismoDia = ev.isAllDayEvent() && Utilities.formatDate(ev.getAllDayStartDate(), zona, 'yyyy-MM-dd') === t.limite;
+    if (!mismoDia) {
+      if (ev.isAllDayEvent()) ev.setAllDayDate(dia);
+      else { ev.deleteEvent(); const nuevo = cal.createAllDayEvent(titulo, dia, { description: desc }); nuevo.removeAllReminders(); nuevo.addPopupReminder(CAL_AVISO_MIN); }
+      tocado = true;
+    }
+    if (tocado) cambiados++;
+  });
+
+  Object.keys(existentes).forEach(function (id) {
+    if (!quiero[id]) existentes[id].forEach(function (ev) { ev.deleteEvent(); borrados++; });
+  });
+  return { ok: true, eventos: Object.keys(quiero).length, creados: creados, cambiados: cambiados, borrados: borrados };
+}
+
+/* Ejecútala una vez desde el editor (▶) para dar el permiso de Calendar y crear el calendario «Fincas». */
+function autorizarCalendario() {
+  const c = calendarioFincas();
+  Logger.log('Calendario listo: ' + c.getName());
 }
 
 function guardarCopia(estado, fecha) {
