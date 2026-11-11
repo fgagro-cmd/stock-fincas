@@ -3,7 +3,7 @@
    Todo se guarda en el propio móvil (IndexedDB) y funciona sin conexión.
    El código no lleva datos: en un móvil nuevo se restaura desde la hoja de Google o un fichero. */
 
-const APP_VERSION = '2.9.1';
+const APP_VERSION = '2.9.2';
 const APP_NAME = 'Gestión fincas';
 
 /* ---------- Listas fijas (todo con tilde: mismo lenguaje en el histórico, la app y Cuentas fincas) ---------- */
@@ -1633,6 +1633,38 @@ function openHistorico(j) {
 }
 
 /* ---------- Render general ---------- */
+/* ---------- Aviso de copia de seguridad (desde 2.9.2) ----------
+   Si la última copia en fichero tiene 15 días o más (o no hay ninguna), sale un aviso arriba con «Guardar copia».
+   «Mañana» lo aparca hasta el día siguiente en este aparato. Va fuera de #view para que no se borre al repintar una pestaña. */
+const COPIA_DIAS = 15, COPIA_POSPONER = 'gestionfincas-avisoCopia';
+function diasDesdeCopia() {
+  const f = state.settings.lastBackup;
+  if (!f) return null;
+  const t = new Date(f).getTime();
+  return isNaN(t) ? null : Math.max(0, Math.floor((Date.now() - t) / 864e5));
+}
+function pintarAvisoCopia() {
+  const box = document.getElementById('avisoCopiaBox');
+  if (!box) return;
+  let ver = false, d = null;
+  try {
+    if (state && !(appVacia())) {
+      d = diasDesdeCopia();
+      let hasta = 0; try { hasta = Number(localStorage.getItem(COPIA_POSPONER)) || 0; } catch (_) {}
+      ver = (d === null || d >= COPIA_DIAS) && Date.now() >= hasta;
+    }
+  } catch (_) { ver = false; }
+  if (!ver) { box.innerHTML = ''; return; }
+  const txt = d === null ? 'Aún no has guardado ninguna copia de seguridad en fichero.' : `Tu última copia de seguridad es de hace ${d} días.`;
+  box.innerHTML = `<div class="aviso-copia" role="status"><div class="aviso-copia-txt"><b>🛟 ${txt}</b><span>Guárdala en Drive › Apps › Copia de seguridad.</span></div><div class="aviso-copia-btns"><button class="btn primary" id="acGuardar">Guardar copia</button><button class="btn" id="acLuego">Mañana</button></div></div>`;
+  document.getElementById('acGuardar').onclick = async () => { await shareOrDownloadBackup(); pintarAvisoCopia(); };
+  document.getElementById('acLuego').onclick = () => {
+    const m = new Date(); m.setHours(24, 0, 0, 0);
+    try { localStorage.setItem(COPIA_POSPONER, String(m.getTime())); } catch (_) {}
+    pintarAvisoCopia();
+  };
+}
+
 function renderAll() {
   const m = computeStock();
   $('#totalValor').textContent = eur(totalValor(m));
@@ -1645,6 +1677,7 @@ function renderAll() {
     $('#view').insertAdjacentHTML('afterbegin', `<div class="notice"><b>Este móvil todavía no tiene datos</b><p class="small">La app ya no lleva el stock dentro. Restáuralo una vez desde Ajustes: «Copia automática en Google Sheets» → «Restaurar desde la hoja», o «Restaurar desde fichero» con la copia guardada en Drive (Apps › Copia de seguridad).</p><button class="btn primary" id="goAj">Abrir Ajustes</button></div>`);
     $('#goAj').onclick = openSettings;
   }
+  pintarAvisoCopia();
 }
 
 async function init() {
